@@ -271,29 +271,32 @@ int main(int argc, char **argv) {
   }
 
   /* Wait for completion and print progress bar. */
-  while(1) {
+  uint32_t tcount;
+  do {
     usleep(100000);
-    pthread_mutex_lock(&g_threadcount_lock);
-    if (g_threadcount == 0) {
-      pthread_mutex_unlock(&g_threadcount_lock);
-      break;
-    }
-    pthread_mutex_unlock(&g_threadcount_lock);
-    pthread_mutex_lock(&g_next_lock);
     printf("\r[");
+    pthread_mutex_lock(&g_next_lock);
     uint32_t pct = g_next * 100 / (0xffff - 1);
+    pthread_mutex_unlock(&g_next_lock);
     for (uint8_t i = 0; i < pct / 2; i++) {
       printf("*");
     }
     for (uint8_t i = pct / 2; i < 50; i++) {
       printf(".");
     }
-    printf("] %3d%%  %lld keys found", pct, g_keysfound); /* Dirty read. */
+    pthread_mutex_lock(&g_write_lock);
+    printf("] %3d%%  %lld keys found", pct, g_keysfound);
+    pthread_mutex_unlock(&g_write_lock);
     fflush(stdout);
-    pthread_mutex_unlock(&g_next_lock);
-  }
+
+    pthread_mutex_lock(&g_threadcount_lock);
+    tcount = g_threadcount;
+    pthread_mutex_unlock(&g_threadcount_lock);
+  } while (tcount > 0);
+
   pthread_mutex_destroy(&g_next_lock);
   pthread_mutex_destroy(&g_threadcount_lock);
+  pthread_mutex_destroy(&g_write_lock);
 
   fclose(g_outfp);
   printf("\n");
