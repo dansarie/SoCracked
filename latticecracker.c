@@ -234,12 +234,12 @@ int main(int argc, char **argv) {
       return 1;
     }
 
-    g_pt1 = strtol(argv[2], NULL, 16);
-    g_ct1 = strtol(argv[3], NULL, 16);
-    g_tw1 = strtoll(argv[4], NULL, 16);
-    g_pt2 = strtol(argv[5], NULL, 16);
-    g_ct2 = strtol(argv[6], NULL, 16);
-    g_tw2 = strtoll(argv[7], NULL, 16);
+    g_pt1 = strtoul(argv[2], NULL, 16);
+    g_ct1 = strtoul(argv[3], NULL, 16);
+    g_tw1 = strtoull(argv[4], NULL, 16);
+    g_pt2 = strtoul(argv[5], NULL, 16);
+    g_ct2 = strtoul(argv[6], NULL, 16);
+    g_tw2 = strtoull(argv[7], NULL, 16);
 
     printf("PT1: %06x CT1: %06x TW1: %016llx\n", g_pt1, g_ct1, g_tw1);
     printf("PT2: %06x CT2: %06x TW2: %016llx\n", g_pt2, g_ct2, g_tw2);
