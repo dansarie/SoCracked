@@ -21,6 +21,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 /* Lookup tables for the Lattice algorithm s-box. */
@@ -272,20 +273,16 @@ int main(int argc, char **argv) {
 
   /* Wait for completion and print progress bar. */
   uint32_t tcount;
+  const uint8_t bar[] = "**************************************************";
+  const uint8_t nobar[] = "..................................................";
   do {
     usleep(100000);
-    printf("\r[");
     pthread_mutex_lock(&g_next_lock);
     uint32_t pct = g_next * 100 / (0xffff - 1);
     pthread_mutex_unlock(&g_next_lock);
-    for (uint8_t i = 0; i < pct / 2; i++) {
-      printf("*");
-    }
-    for (uint8_t i = pct / 2; i < 50; i++) {
-      printf(".");
-    }
     pthread_mutex_lock(&g_write_lock);
-    printf("] %3d%%  %lld keys found", pct, g_keysfound);
+    printf("\r[%s%s] %3d%%  %lld keys found",
+        bar + 50 - pct / 2, nobar + pct / 2, pct, g_keysfound);
     pthread_mutex_unlock(&g_write_lock);
     fflush(stdout);
 
