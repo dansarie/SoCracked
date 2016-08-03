@@ -17,8 +17,8 @@
    along with this program. If not, see <http://www.gnu.org/licenses/>. */
 
 #include <assert.h>
+#include <inttypes.h>
 #include <pthread.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -166,7 +166,7 @@ void *crack(void *param) {
 
   uint64_t *kkeys = (uint64_t*)malloc(0x10000 * sizeof(uint64_t));
   if (kkeys == NULL) {
-    fprintf(stderr, "Error: malloc returned null in thread %d.\n", threadid);
+    fprintf(stderr, "Error: malloc returned null in thread %" PRIu32 ".\n", threadid);
     pthread_mutex_lock(&g_threadcount_lock);
     g_threadcount -= 1;
     pthread_mutex_unlock(&g_threadcount_lock);
@@ -198,7 +198,7 @@ void *crack(void *param) {
       if (encrypt_lattice(g_pt2, kkeys[i], g_tw2) == g_ct2) {
         if (g_pt3 == (uint32_t)-1 || encrypt_lattice(g_pt3, kkeys[i], g_tw3) == g_ct3) {
           pthread_mutex_lock(&g_write_lock);
-          fprintf(g_outfp, "%014llx\n", kkeys[i]);
+          fprintf(g_outfp, "%014" PRIx64 "\n", kkeys[i]);
           g_keysfound += 1;
           pthread_mutex_unlock(&g_write_lock);
         }
@@ -242,13 +242,13 @@ int main(int argc, char **argv) {
     g_ct2 = strtoul(argv[6], NULL, 16);
     g_tw2 = strtoull(argv[7], NULL, 16);
 
-    printf("PT1: %06x CT1: %06x TW1: %016llx\n", g_pt1, g_ct1, g_tw1);
-    printf("PT2: %06x CT2: %06x TW2: %016llx\n", g_pt2, g_ct2, g_tw2);
+    printf("PT1: %06" PRIx32 " CT1: %06" PRIx32 " TW1: %016" PRIx64 "\n", g_pt1, g_ct1, g_tw1);
+    printf("PT2: %06" PRIx32 " CT2: %06" PRIx32 " TW2: %016" PRIx64 "\n", g_pt2, g_ct2, g_tw2);
     if (argc == 11) {
       g_pt3 = strtol(argv[8], NULL, 16);
       g_ct3 = strtol(argv[9], NULL, 16);
       g_tw3 = strtoll(argv[10], NULL, 16);
-      printf("PT3: %06x CT3: %06x TW3: %016llx\n", g_pt3, g_ct3, g_tw3);
+      printf("PT3: %06" PRIx32 " CT3: %06" PRIx32 " TW3: %016" PRIx64 "\n", g_pt3, g_ct3, g_tw3);
     }
   } else {
     printf("Usage:\n");
@@ -281,7 +281,7 @@ int main(int argc, char **argv) {
     uint32_t pct = g_next * 100 / (0xffff - 1);
     pthread_mutex_unlock(&g_next_lock);
     pthread_mutex_lock(&g_write_lock);
-    printf("\r[%s%s] %3d%%  %lld keys found",
+    printf("\r[%s%s] %3" PRIu32 "%%  %" PRIu64 " keys found",
         bar + 50 - pct / 2, nobar + pct / 2, pct, g_keysfound);
     pthread_mutex_unlock(&g_write_lock);
     fflush(stdout);
