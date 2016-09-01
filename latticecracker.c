@@ -1,6 +1,7 @@
 /* latticecracker
-   Performs a meet-in-the-middle attack on three rounds of the Lattice algorithm as specified
-   in MIL-STD-188-141 and recovers all candidate keys in 2^33 time.
+   Performs a meet-in-the-middle attack on three or four rounds of the Lattice algorithm as
+   specified in MIL-STD-188-141 and recovers all candidate keys in 2^33 time for three rounds of
+   encryption and 2^40 time for four rounds of encryption.
    Copyright (C) 2016 Marcus Dansarie <marcus@dansarie.se>
 
    This program is free software: you can redistribute it and/or modify
@@ -89,18 +90,20 @@ static inline uint32_t enc_one_round(uint32_t pt, uint32_t rkey);
 static inline uint32_t dec_one_round(uint32_t ct, uint32_t rkey);
 
 /* Do three rounds of encryption with the Lattice algorithm.
-   pt    Plaintext (24 bits).
-   key   Encryption key (56 bits).
-   tweak Tweak (64 bits). */
-static inline uint32_t encrypt_lattice(uint32_t pt, uint64_t key, uint64_t tweak);
+   rounds Number of rounds (1-8).
+   pt     Plaintext (24 bits).
+   key    Encryption key (56 bits).
+   tweak  Tweak (64 bits). */
+static inline uint32_t encrypt_lattice(uint8_t rounds, uint32_t pt, uint64_t key, uint64_t tweak);
 
 /* Returns the next work unit, i.e. the next value of key bytes 1 and 2.
    A return value of 0x10000 indicates that there are no more work units available and that the
    thread should stop. */
 uint32_t get_next();
 
-/* The cracking function. The argument is not used. */
-void *crack(void *param);
+/* The cracking functions. The argument is not used. */
+void *crack3(void *param);
+void *crack4(void *param);
 
 static inline uint32_t enc_one_round(uint32_t pt, uint32_t rkey) {
   uint8_t pa = pt >> 16;
@@ -128,9 +131,9 @@ static inline uint32_t dec_one_round(uint32_t ct, uint32_t rkey) {
   return (pa << 16) | (pb << 8) | pc;
 }
 
-static inline uint32_t encrypt_lattice(uint32_t pt, uint64_t key, uint64_t tweak) {
+static inline uint32_t encrypt_lattice(uint8_t rounds, uint32_t pt, uint64_t key, uint64_t tweak) {
   uint32_t ct = pt;
-  for (uint8_t round = 0; round < 3; round++) {
+  for (uint8_t round = 0; round < rounds; round++) {
     uint32_t rkey = (key >> 32) ^ (tweak >> 40);
     tweak = (tweak << 24) | (tweak >> 40);
     key = ((key << 24) | (key >> 32)) & 0x00ffffffffffffff;
@@ -151,7 +154,7 @@ uint32_t get_next() {
   return ret;
 }
 
-void *crack(void *param) {
+void *crack3(void *param) {
   (void)(param); /* Silence unused warning. */
   pthread_mutex_lock(&g_threadcount_lock);
   uint32_t threadid = g_threadcount++;
@@ -195,8 +198,8 @@ void *crack(void *param) {
 
     /* Do trial encryptions with the candidate keys and write the successful ones to file. */
     for (uint32_t i = 0; i < 0x10000; i++) {
-      if (encrypt_lattice(g_pt2, kkeys[i], g_tw2) == g_ct2) {
-        if (g_pt3 == (uint32_t)-1 || encrypt_lattice(g_pt3, kkeys[i], g_tw3) == g_ct3) {
+      if (encrypt_lattice(3, g_pt2, kkeys[i], g_tw2) == g_ct2) {
+        if (g_pt3 == (uint32_t)-1 || encrypt_lattice(3, g_pt3, kkeys[i], g_tw3) == g_ct3) {
           pthread_mutex_lock(&g_write_lock);
           fprintf(g_outfp, "%014" PRIx64 "\n", kkeys[i]);
           g_keysfound += 1;
@@ -214,6 +217,61 @@ void *crack(void *param) {
   return NULL;
 }
 
+void *crack4(void *param) {
+  (void)(param); /* Silence unused warning. */
+  pthread_mutex_lock(&g_threadcount_lock);
+  g_threadcount++;
+  pthread_mutex_unlock(&g_threadcount_lock);
+
+  /* Precalculate tweaks. */
+  uint32_t r1tw = (g_tw1 >> 40);
+  uint32_t r4tw = (g_tw1 >> 32) & 0xffffff;
+  uint8_t tw1 = g_tw1 >> 56;
+  uint8_t tw4 = (g_tw1 >> 32) & 0xff;
+  uint8_t tw5 = (g_tw1 >> 24) & 0xff;
+  uint8_t tw6 = (g_tw1 >> 16) & 0xff;
+  uint8_t tw7 = (g_tw1 >> 8) & 0xff;
+
+  uint32_t k12;
+  while ((k12 = get_next()) < 0x10000) {
+    uint8_t k2 = k12 & 0xff;
+    for (uint32_t k345 = 0; k345 < 0x1000000; k345++) {
+      uint32_t k123 = (k12 << 8) | (k345 >> 16);
+      uint32_t r1ct = enc_one_round(g_pt1, k123 ^ r1tw);
+      uint32_t r3ct = dec_one_round(g_ct1, k345 ^ r4tw);
+      uint8_t k4 = (k345 >> 8) & 0xff;
+      uint8_t k5 = k345 & 0xff;
+      uint8_t app = r3ct >> 16;
+      uint8_t bpp = (r3ct >> 8) & 0xff;
+      uint8_t cpp = r3ct & 0xff;
+      uint8_t a = r1ct >> 16;
+      uint8_t b = (r1ct >> 8) & 0xff;
+      uint8_t c = r1ct & 0xff;
+      uint8_t ap = g_sbox_enc[a ^ b ^ k4 ^ tw4];
+      uint8_t cp = g_sbox_enc[b ^ c ^ k5 ^ tw5];
+      uint8_t bp = g_sbox_dec[bpp] ^ app ^ cpp ^ k2 ^ tw1;
+      uint8_t k6 = g_sbox_dec[bp] ^ ap ^ b ^ cp ^ tw6;
+      uint8_t k7 = g_sbox_dec[app] ^ ap ^ bp ^ tw7;
+      uint64_t kkey = ((uint64_t)k123 << 32) | ((uint64_t)k4) << 24 | ((uint64_t)k5) << 16
+          | ((uint64_t)k6) << 8 | k7;
+      if (encrypt_lattice(4, g_pt2, kkey, g_tw2) == g_ct2) {
+        if (g_pt3 == (uint32_t)-1 || encrypt_lattice(4, g_pt3, kkey, g_tw3) == g_ct3) {
+          pthread_mutex_lock(&g_write_lock);
+          fprintf(g_outfp, "%014" PRIx64 "\n", kkey);
+          g_keysfound += 1;
+          pthread_mutex_unlock(&g_write_lock);
+        }
+      }
+    }
+  }
+
+  pthread_mutex_lock(&g_threadcount_lock);
+  g_threadcount -= 1;
+  pthread_mutex_unlock(&g_threadcount_lock);
+
+  return NULL;
+}
+
 int main(int argc, char **argv) {
   /* Fill lookup table for the inverse s-box. */
   for (uint16_t i = 0; i < 256; i++) {
@@ -223,34 +281,50 @@ int main(int argc, char **argv) {
   assert(enc_one_round(0x54e0cd, 0xc2284a ^ 0x543bd8) == 0xd0721d);
   assert(dec_one_round(0xd0721d, 0xc2284a ^ 0x543bd8) == 0x54e0cd);
   assert(dec_one_round(dec_one_round(0xd0721d, 0xc2284a ^ 0x543bd8), 0) == 0x2ac222);
-  assert(encrypt_lattice(0x54e0cd, 0xc2284a1ce7be2f, 0x543bd88000017550) == 0x41db0c);
+  assert(encrypt_lattice(3, 0x54e0cd, 0xc2284a1ce7be2f, 0x543bd88000017550) == 0x41db0c);
+  assert(encrypt_lattice(4, 0x54e0cd, 0xc2284a1ce7be2f, 0x543bd88000017550) == 0x987c6d);
 
-  if (argc != 8 && argc != 11) {
-    printf("Usage:\n");
-    printf("latticecracker outfile plaintext1 ciphertext1 tweak1 plaintext2 ciphertext2 tweak2 "
-        "[plaintext3 ciphertext3 tweak3]\n\n");
+  const char* usagestr = "Usage:\n"
+      "latticecracker rounds outfile plaintext1 ciphertext1 tweak1 plaintext2 ciphertext2 "
+      "tweak2 [plaintext3 ciphertext3 tweak3]\n\n";
+
+  if (argc != 9 && argc != 12) {
+    printf("%s", usagestr);
     return 1;
   }
 
-  g_outfp = fopen(argv[1], "w");
+  void *(*crack_func)(void*) = NULL;
+  switch (atoi(argv[1])) {
+    case 3:
+      crack_func = crack3;
+      break;
+    case 4:
+      crack_func = crack4;
+      break;
+    default:
+      fprintf(stderr, "Bad number of rounds. Only 3 and 4 rounds are supported.\n");
+      return 1;
+  }
+
+  g_outfp = fopen(argv[2], "w");
   if (g_outfp == NULL) {
     fprintf(stderr, "Could not open output file for writing.\n");
     return 1;
   }
 
-  g_pt1 = strtoul(argv[2], NULL, 16);
-  g_ct1 = strtoul(argv[3], NULL, 16);
-  g_tw1 = strtoull(argv[4], NULL, 16);
-  g_pt2 = strtoul(argv[5], NULL, 16);
-  g_ct2 = strtoul(argv[6], NULL, 16);
-  g_tw2 = strtoull(argv[7], NULL, 16);
+  g_pt1 = strtoul(argv[3], NULL, 16);
+  g_ct1 = strtoul(argv[4], NULL, 16);
+  g_tw1 = strtoull(argv[5], NULL, 16);
+  g_pt2 = strtoul(argv[6], NULL, 16);
+  g_ct2 = strtoul(argv[7], NULL, 16);
+  g_tw2 = strtoull(argv[8], NULL, 16);
 
   printf("PT1: %06" PRIx32 " CT1: %06" PRIx32 " TW1: %016" PRIx64 "\n", g_pt1, g_ct1, g_tw1);
   printf("PT2: %06" PRIx32 " CT2: %06" PRIx32 " TW2: %016" PRIx64 "\n", g_pt2, g_ct2, g_tw2);
-  if (argc == 11) {
-    g_pt3 = strtol(argv[8], NULL, 16);
-    g_ct3 = strtol(argv[9], NULL, 16);
-    g_tw3 = strtoll(argv[10], NULL, 16);
+  if (argc == 12) {
+    g_pt3 = strtol(argv[9], NULL, 16);
+    g_ct3 = strtol(argv[10], NULL, 16);
+    g_tw3 = strtoll(argv[11], NULL, 16);
     printf("PT3: %06" PRIx32 " CT3: %06" PRIx32 " TW3: %016" PRIx64 "\n", g_pt3, g_ct3, g_tw3);
   }
 
@@ -266,7 +340,7 @@ int main(int argc, char **argv) {
   uint32_t numproc = sysconf(_SC_NPROCESSORS_ONLN);
   pthread_t thread_id[numproc];
   for (uint32_t i = 0; i < numproc; i++) {
-    pthread_create(&(thread_id[i]), NULL, crack, NULL);
+    pthread_create(&(thread_id[i]), NULL, crack_func, NULL);
   }
 
   /* Wait for completion and print progress bar. */
@@ -281,6 +355,7 @@ int main(int argc, char **argv) {
     pthread_mutex_lock(&g_write_lock);
     printf("\r[%s%s] %3" PRIu32 "%%  %" PRIu64 " keys found",
         bar + 50 - pct / 2, nobar + pct / 2, pct, g_keysfound);
+    fflush(g_outfp);
     pthread_mutex_unlock(&g_write_lock);
     fflush(stdout);
 
