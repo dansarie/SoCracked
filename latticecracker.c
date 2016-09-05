@@ -368,9 +368,9 @@ int main(int argc, char **argv) {
   printf("PT1: %06" PRIx32 " CT1: %06" PRIx32 " TW1: %016" PRIx64 "\n", g_pt1, g_ct1, g_tw1);
   printf("PT2: %06" PRIx32 " CT2: %06" PRIx32 " TW2: %016" PRIx64 "\n", g_pt2, g_ct2, g_tw2);
   if (argc == 12) {
-    g_pt3 = strtol(argv[9], NULL, 16);
-    g_ct3 = strtol(argv[10], NULL, 16);
-    g_tw3 = strtoll(argv[11], NULL, 16);
+    g_pt3 = strtoul(argv[9], NULL, 16);
+    g_ct3 = strtoul(argv[10], NULL, 16);
+    g_tw3 = strtoull(argv[11], NULL, 16);
     printf("PT3: %06" PRIx32 " CT3: %06" PRIx32 " TW3: %016" PRIx64 "\n", g_pt3, g_ct3, g_tw3);
   }
 
