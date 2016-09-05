@@ -1,7 +1,7 @@
 /* latticecracker
-   Performs a meet-in-the-middle attack on three or four rounds of the Lattice algorithm as
-   specified in MIL-STD-188-141 and recovers all candidate keys in 2^33 time for three rounds of
-   encryption and 2^40 time for four rounds of encryption.
+   Attacks three or four rounds of the Lattice algorithm as specified in MIL-STD-188-141 and
+   recovers all candidate keys in 2^25 time for three rounds of encryption and 2^40 time for four
+   rounds of encryption.
    Copyright (C) 2016 Marcus Dansarie <marcus@dansarie.se>
 
    This program is free software: you can redistribute it and/or modify
@@ -60,13 +60,22 @@ const uint8_t g_sbox_enc[] = {0x9c, 0xf2, 0x14, 0xc1, 0x8e, 0xcb, 0xb2, 0x65,
                               0x2b, 0xae, 0x36, 0xda, 0x7e, 0x86, 0x35, 0x51,
                               0x05, 0x12, 0xb8, 0xa6, 0x9a, 0x2c, 0x06, 0x4b};
 
+struct delta {
+    uint32_t key;
+    struct delta *next;
+    struct delta *last;
+};
+
 pthread_mutex_t g_next_lock;
 pthread_mutex_t g_write_lock;
 pthread_mutex_t g_threadcount_lock;
+pthread_mutex_t g_first_lock;
 uint64_t g_keysfound = 0;
-uint32_t g_threadcount = 0; /* Number of working threads. */
-uint32_t g_next = 0;        /* Next work unit. (Value of key bytes 1 and 2.) */
-FILE *g_outfp = NULL;       /* Pointer to output file. */
+uint32_t g_threadcount = 0;    /* Number of working threads. */
+uint32_t g_next = 0;           /* Next work unit. (Value of key bytes 1 and 2.) */
+FILE *g_outfp = NULL;          /* Pointer to output file. */
+struct delta **g_lists = NULL; /* Table of linked lists for associating differential with key. */
+struct delta *g_items = NULL;  /* List of all instances used to build table in g_lists. */
 
 /* Known plaintexts, ciphertexts and tweaks. If only two are used g_pt3 = g_tw3 = g_ct3 = -1. */
 uint32_t g_pt1 = (uint32_t)-1;
@@ -161,59 +170,96 @@ void *crack3(void *param) {
   pthread_mutex_unlock(&g_threadcount_lock);
 
   /* Precalculate round tweaks. */
-  uint32_t r1tw = (g_tw1 >> 40);
-  uint32_t r2tw = (g_tw1 >> 16) & 0xffffff;
-  r2tw = (r2tw & 0xff0000) | ((r2tw & 0xff) << 8) | ((r2tw & 0xff00) >> 8);
-  r2tw = r2tw ^ ((r2tw & 0xff00) << 8) ^ ((r2tw & 0xff00) >> 8);
-  uint32_t r3tw = ((g_tw1 >> 56) | (g_tw1 << 8)) & 0xffffff;
+  uint32_t r1tw1 = (g_tw1 >> 40);
+  uint32_t r1tw2 = (g_tw2 >> 40);
+  uint32_t r2tw1 = (g_tw1 >> 16) & 0xffffff;
+  uint32_t r2tw2 = (g_tw2 >> 16) & 0xffffff;
+  uint32_t r3tw1 = ((g_tw1 >> 56) | (g_tw1 << 8)) & 0xffffff;
+  uint32_t r3tw2 = ((g_tw2 >> 56) | (g_tw2 << 8)) & 0xffffff;
 
-  uint64_t *kkeys = (uint64_t*)malloc(0x10000 * sizeof(uint64_t));
-  if (kkeys == NULL) {
-    fprintf(stderr, "Error: malloc returned null in thread %" PRIu32 ".\n", threadid);
-    pthread_mutex_lock(&g_threadcount_lock);
-    g_threadcount -= 1;
-    pthread_mutex_unlock(&g_threadcount_lock);
-    return NULL;
+  /* Create a hash table associating differentials after first round with subkey. */
+  if (pthread_mutex_trylock(&g_first_lock) == 0) {
+    g_lists = (struct delta**)calloc(0x1000000, sizeof(struct delta*));
+    g_items = (struct delta*)malloc(0x1000000 * sizeof(struct delta));
+    if (g_lists == NULL || g_items == NULL) {
+      fprintf(stderr, "Error: malloc returned null in thread %" PRIu32 ".\n", threadid);
+      if (g_items != NULL) {
+        free(g_items);
+      }
+      if (g_lists != NULL) {
+        free(g_lists);
+      }
+      g_items = NULL;
+      g_lists = NULL;
+      pthread_mutex_unlock(&g_first_lock);
+      pthread_mutex_lock(&g_threadcount_lock);
+      g_threadcount -= 1;
+      pthread_mutex_unlock(&g_threadcount_lock);
+      return NULL;
+    }
+
+    for (uint32_t k1 = 0; k1 < 0x1000000; k1++) {
+      uint32_t delta = enc_one_round(g_pt1, k1 ^ r1tw1) ^ enc_one_round(g_pt2, k1 ^ r1tw2);
+      if (g_lists[delta] == NULL) {
+        g_lists[delta] = &(g_items[k1]);
+        g_lists[delta]->key = k1;
+        g_lists[delta]->next = NULL;
+        g_lists[delta]->last = g_lists[delta];
+      } else {
+        g_lists[delta]->last->next = &(g_items[k1]);
+        g_lists[delta]->last = &(g_items[k1]);
+        g_lists[delta]->last->key = k1;
+        g_lists[delta]->last->next = NULL;
+      }
+    }
+    pthread_mutex_unlock(&g_first_lock);
+  } else {
+    pthread_mutex_lock(&g_first_lock);
+    pthread_mutex_unlock(&g_first_lock);
+    if (g_lists == NULL) {
+      pthread_mutex_lock(&g_threadcount_lock);
+      g_threadcount -= 1;
+      pthread_mutex_unlock(&g_threadcount_lock);
+      return NULL;
+    }
   }
 
   uint32_t outer;
-  while ((outer = get_next()) < 0x10000) { /* Key bytes 1 and 2. */
-    uint32_t forward[256];
-    for (uint16_t k3 = 0; k3 < 256; k3++) {
-      uint32_t rkey = ((outer << 8) | k3) ^ r1tw;
-      forward[k3] = enc_one_round(g_pt1, rkey);
-    }
-    /* Calculate 65536 candidate keys. */
-    for (uint16_t k7 = 0; k7 < 256; k7++) {
-      uint32_t rkey = (outer | (k7 << 16)) ^ r3tw;
-      uint32_t back = dec_one_round(dec_one_round(g_ct1, rkey), 0);
-      for (uint16_t k3 = 0; k3 < 256; k3++) {
-        uint32_t k456 = forward[k3] ^ back ^ r2tw;
-        k456 = k456 ^ ((k456 & 0xff00) << 8) ^ ((k456 & 0xff00) >> 8);
-        k456 = (k456 & 0xff0000) | ((k456 & 0xff) << 8) | ((k456 & 0xff00) >> 8);
-        kkeys[k7 * 256 + k3] = ((uint64_t)outer << 40) | ((uint64_t)k3 << 32)
-            | ((uint64_t)k456 << 8) | k7;
-      }
-    }
-
-    /* Do trial encryptions with the candidate keys and write the successful ones to file. */
-    for (uint32_t i = 0; i < 0x10000; i++) {
-      if (encrypt_lattice(3, g_pt2, kkeys[i], g_tw2) == g_ct2) {
-        if (g_pt3 == (uint32_t)-1 || encrypt_lattice(3, g_pt3, kkeys[i], g_tw3) == g_ct3) {
-          pthread_mutex_lock(&g_write_lock);
-          fprintf(g_outfp, "%014" PRIx64 "\n", kkeys[i]);
-          g_keysfound += 1;
-          pthread_mutex_unlock(&g_write_lock);
+  while ((outer = get_next()) < 0x10000) {
+    for (uint16_t inner = 0; inner < 0x100; inner++) {
+      uint32_t k3 = outer << 8 | inner;
+      uint32_t delta = dec_one_round(dec_one_round(g_ct1, r3tw1 ^ k3), r2tw1)
+          ^ dec_one_round(dec_one_round(g_ct2, r3tw2 ^ k3), r2tw2);
+      struct delta *next = g_lists[delta];
+      while (next != NULL) {
+        uint32_t k1 = next->key;
+        if (((k1 >> 8) ^ (k3 & 0xffff)) == 0) {
+          uint32_t k2 = enc_one_round(g_pt1, k1 ^ r1tw1)
+              ^ dec_one_round(dec_one_round(g_ct1, k3 ^ r3tw1), r2tw1);
+          k2 = k2 ^ ((k2 & 0xff00) << 8) ^ ((k2 & 0xff00) >> 8);
+          k2 = (k2 & 0xff0000) | ((k2 & 0xff) << 8) | ((k2 & 0xff00) >> 8);
+          uint64_t key = (uint64_t)k1 << 32 | k2 << 8 | k3 >> 16;
+          if (g_pt3 == (uint32_t)-1 || encrypt_lattice(3, g_pt3, key, g_tw3) == g_ct3) {
+            pthread_mutex_lock(&g_write_lock);
+            fprintf(g_outfp, "%014" PRIx64 "\n", key);
+            g_keysfound += 1;
+            pthread_mutex_unlock(&g_write_lock);
+          }
         }
+        next = next->next;
       }
     }
   }
 
   pthread_mutex_lock(&g_threadcount_lock);
   g_threadcount -= 1;
+  if (g_threadcount == 0) {
+    free(g_items);
+    free(g_lists);
+    g_items = NULL;
+    g_lists = NULL;
+  }
   pthread_mutex_unlock(&g_threadcount_lock);
-  free(kkeys);
-
   return NULL;
 }
 
@@ -330,7 +376,8 @@ int main(int argc, char **argv) {
 
   if (pthread_mutex_init(&g_next_lock, NULL) != 0
       || pthread_mutex_init(&g_threadcount_lock, NULL) != 0
-      || pthread_mutex_init(&g_write_lock, NULL) != 0) {
+      || pthread_mutex_init(&g_write_lock, NULL) != 0
+      || pthread_mutex_init(&g_first_lock, NULL) != 0) {
     fprintf(stderr, "Mutex init failed.\n");
     fclose(g_outfp);
     return 1;
@@ -367,7 +414,7 @@ int main(int argc, char **argv) {
   pthread_mutex_destroy(&g_next_lock);
   pthread_mutex_destroy(&g_threadcount_lock);
   pthread_mutex_destroy(&g_write_lock);
-
+  pthread_mutex_destroy(&g_first_lock);
   fclose(g_outfp);
   printf("\n");
 
