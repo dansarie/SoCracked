@@ -1,7 +1,7 @@
 /* latticecracker
-   Attacks three or four rounds of the Lattice algorithm as specified in MIL-STD-188-141 and
-   recovers all candidate keys in 2^25 time for three rounds of encryption and 2^40 time for four
-   rounds of encryption.
+   Attacks two, three or four rounds of the Lattice algorithm as specified in MIL-STD-188-141 and
+   recovers all candidate keys in 2^10 - 2^12 time for two rounds, 2^25 time for three rounds, and
+   2^40 time for four rounds of encryption.
    Copyright (C) 2016 Marcus Dansarie <marcus@dansarie.se>
 
    This program is free software: you can redistribute it and/or modify
@@ -161,6 +161,89 @@ uint32_t get_next() {
   g_next += 1;
   pthread_mutex_unlock(&g_next_lock);
   return ret;
+}
+
+void crack2() {
+  uint8_t tw11 = (g_tw1 >> 56) & 0xff;
+  uint8_t tw12 = (g_tw1 >> 48) & 0xff;
+  uint8_t tw13 = (g_tw1 >> 40) & 0xff;
+  uint8_t tw14 = (g_tw1 >> 32) & 0xff;
+  uint8_t tw15 = (g_tw1 >> 24) & 0xff;
+  uint8_t tw16 = (g_tw1 >> 16) & 0xff;
+  uint8_t tw21 = (g_tw2 >> 56) & 0xff;
+  uint8_t tw22 = (g_tw2 >> 48) & 0xff;
+  uint8_t tw23 = (g_tw2 >> 40) & 0xff;
+  uint8_t tw24 = (g_tw2 >> 32) & 0xff;
+  uint8_t tw25 = (g_tw2 >> 24) & 0xff;
+  uint8_t tw26 = (g_tw2 >> 16) & 0xff;
+  uint8_t a1 = (g_pt1 >> 16) & 0xff;
+  uint8_t b1 = (g_pt1 >> 8) & 0xff;
+  uint8_t c1 = g_pt1 & 0xff;
+  uint8_t a2 = (g_pt2 >> 16) & 0xff;
+  uint8_t b2 = (g_pt2 >> 8) & 0xff;
+  uint8_t c2 = g_pt2 & 0xff;
+  a1 = a1 ^ b1 ^ tw11;
+  c1 = c1 ^ b1 ^ tw12;
+  b1 = b1 ^ tw13;
+  a2 = a2 ^ b2 ^ tw21;
+  c2 = c2 ^ b2 ^ tw22;
+  b2 = b2 ^ tw23;
+  uint8_t app1 = (g_ct1 >> 16) & 0xff;
+  uint8_t app2 = (g_ct2 >> 16) & 0xff;
+  uint8_t cpp1 = g_ct1 & 0xff;
+  uint8_t cpp2 = g_ct2 & 0xff;
+  uint8_t bpp1 = g_sbox_dec[(g_ct1 >> 8) & 0xff] ^ app1 ^ cpp1 ^ tw16;
+  uint8_t bpp2 = g_sbox_dec[(g_ct2 >> 8) & 0xff] ^ app2 ^ cpp2 ^ tw26;
+  app1 = g_sbox_dec[app1] ^ tw14;
+  app2 = g_sbox_dec[app2] ^ tw24;
+  cpp1 = g_sbox_dec[cpp1] ^ tw15;
+  cpp2 = g_sbox_dec[cpp2] ^ tw25;
+  uint8_t da = app1 ^ app2 ^ bpp1 ^ bpp2;
+  uint8_t dc = cpp1 ^ cpp2 ^ bpp1 ^ bpp2;
+  uint8_t k1[256];
+  uint8_t k2[256];
+  uint16_t k1p = 0;
+  uint16_t k2p = 0;
+  for (uint16_t k = 0; k < 256; k++) {
+    if ((g_sbox_enc[a1 ^ k] ^ g_sbox_enc[a2 ^ k]) == da) {
+      k1[k1p++] = k;
+    }
+    if ((g_sbox_enc[c1 ^ k] ^ g_sbox_enc[c2 ^ k]) == dc) {
+      k2[k2p++] = k;
+    }
+  }
+  for (uint16_t i = 0; i < k1p; i++) {
+    uint8_t ap1 = g_sbox_enc[a1 ^ k1[i]];
+    uint8_t ap2 = g_sbox_enc[a2 ^ k1[i]];
+    for (uint16_t k = 0; k < k2p; k++) {
+      uint8_t cp1 = g_sbox_enc[c1 ^ k2[k]];
+      uint8_t cp2 = g_sbox_enc[c2 ^ k2[k]];
+      for (uint16_t k3 = 0; k3 < 256; k3++) {
+        uint8_t bp1 = g_sbox_enc[b1 ^ ap1 ^ cp1 ^ k3];
+        uint8_t bp2 = g_sbox_enc[b2 ^ ap2 ^ cp2 ^ k3];
+        uint8_t k41 = bp1 ^ ap1 ^ app1;
+        uint8_t k42 = bp2 ^ ap2 ^ app2;
+        uint8_t k51 = bp1 ^ cp1 ^ cpp1;
+        uint8_t k52 = bp2 ^ cp2 ^ cpp2;
+        uint8_t k6 = bp1 ^ bpp1;
+        if (k41 == k42 && k51 == k52) {
+          uint64_t key = (uint64_t)k1[i] << 48 | (uint64_t)k2[k] << 40 | (uint64_t)k3 << 32
+              | (uint64_t)k41 << 24 | (uint64_t)k51 << 16 | (uint64_t)k6 << 8;
+          if (g_pt3 == (uint32_t)-1 || encrypt_lattice(2, g_pt3, key, g_tw3) == g_ct3) {
+            fprintf(g_outfp, "%014" PRIx64 "\n", key);
+            g_keysfound += 1;
+          }
+        }
+      }
+    }
+  }
+  if (g_keysfound == 0) {
+    printf("No keys found.\n");
+  } else if (g_keysfound == 1) {
+    printf("1 key found.\n");
+  } else {
+    printf("%" PRIu64 " keys found.\n", g_keysfound);
+  }
 }
 
 void *crack3(void *param) {
@@ -341,6 +424,9 @@ int main(int argc, char **argv) {
 
   void *(*crack_func)(void*) = NULL;
   switch (atoi(argv[1])) {
+    case 2:
+      /* Handle separately below. */
+      break;
     case 3:
       crack_func = crack3;
       break;
@@ -348,7 +434,7 @@ int main(int argc, char **argv) {
       crack_func = crack4;
       break;
     default:
-      fprintf(stderr, "Bad number of rounds. Only 3 and 4 rounds are supported.\n");
+      fprintf(stderr, "Bad number of rounds. Only 2, 3, and 4 rounds are supported.\n");
       return 1;
   }
 
@@ -372,6 +458,13 @@ int main(int argc, char **argv) {
     g_ct3 = strtoul(argv[10], NULL, 16);
     g_tw3 = strtoull(argv[11], NULL, 16);
     printf("PT3: %06" PRIx32 " CT3: %06" PRIx32 " TW3: %016" PRIx64 "\n", g_pt3, g_ct3, g_tw3);
+  }
+
+  /* Two rounds. */
+  if (atoi(argv[1]) == 2) {
+    crack2();
+    fclose(g_outfp);
+    return 0;
   }
 
   if (pthread_mutex_init(&g_next_lock, NULL) != 0
