@@ -261,11 +261,11 @@ void crack3() {
   const uint8_t c1 = ((g_pt1 ^ (g_pt1 >> 8)) & 0xff) ^ tw12;
   const uint8_t b2 = ((g_pt2 >> 8) & 0xff) ^ tw23;
   const uint8_t a2 = (((g_pt2 >> 16) ^ (g_pt2 >> 8)) & 0xff) ^ tw21;
-  const uint8_t c2 = ((g_pt2 ^ (g_pt2 >> 8) & 0xff)) ^ tw22;
+  const uint8_t c2 = ((g_pt2 ^ (g_pt2 >> 8)) & 0xff) ^ tw22;
   const uint8_t bppp1 = ((g_sbox_dec[(g_ct1 >> 8) & 0xff] ^ g_ct1 ^ (g_ct1 >> 16)) & 0xff) ^ tw11;
   const uint8_t appp1 = g_sbox_dec[(g_ct1 >> 16) & 0xff] ^ tw17;
   const uint8_t cppp1 = g_sbox_dec[g_ct1 & 0xff] ^ tw18;
-  const uint8_t bppp2 = (g_sbox_dec[(g_ct2 >> 8) & 0xff] ^ g_ct2 ^ (g_ct2 >> 16)) & 0xff ^ tw21;
+  const uint8_t bppp2 = ((g_sbox_dec[(g_ct2 >> 8) & 0xff] ^ g_ct2 ^ (g_ct2 >> 16)) & 0xff) ^ tw21;
   const uint8_t appp2 = g_sbox_dec[(g_ct2 >> 16) & 0xff] ^ tw27;
   const uint8_t cppp2 = g_sbox_dec[g_ct2 & 0xff] ^ tw28;
   const uint8_t dbpp = bppp1 ^ bppp2;
