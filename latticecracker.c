@@ -1,6 +1,6 @@
 /* latticecracker
    Attacks two, three or four rounds of the Lattice algorithm as specified in MIL-STD-188-141 and
-   recovers all candidate keys in 2^10 - 2^12 time for two rounds, 2^25 time for three rounds, and
+   recovers all candidate keys in 2^10 - 2^12 time for two rounds, 2^17 time for three rounds, and
    2^40 time for four rounds of encryption.
    Copyright (C) 2016 Marcus Dansarie <marcus@dansarie.se>
 
@@ -111,7 +111,6 @@ static inline uint32_t encrypt_lattice(uint8_t rounds, uint32_t pt, uint64_t key
 uint32_t get_next();
 
 /* The cracking functions. The argument is not used. */
-void *crack3(void *param);
 void *crack4(void *param);
 
 static inline uint32_t enc_one_round(uint32_t pt, uint32_t rkey) {
@@ -164,42 +163,36 @@ uint32_t get_next() {
 }
 
 void crack2() {
-  uint8_t tw11 = (g_tw1 >> 56) & 0xff;
-  uint8_t tw12 = (g_tw1 >> 48) & 0xff;
-  uint8_t tw13 = (g_tw1 >> 40) & 0xff;
-  uint8_t tw14 = (g_tw1 >> 32) & 0xff;
-  uint8_t tw15 = (g_tw1 >> 24) & 0xff;
-  uint8_t tw16 = (g_tw1 >> 16) & 0xff;
-  uint8_t tw21 = (g_tw2 >> 56) & 0xff;
-  uint8_t tw22 = (g_tw2 >> 48) & 0xff;
-  uint8_t tw23 = (g_tw2 >> 40) & 0xff;
-  uint8_t tw24 = (g_tw2 >> 32) & 0xff;
-  uint8_t tw25 = (g_tw2 >> 24) & 0xff;
-  uint8_t tw26 = (g_tw2 >> 16) & 0xff;
-  uint8_t a1 = (g_pt1 >> 16) & 0xff;
-  uint8_t b1 = (g_pt1 >> 8) & 0xff;
-  uint8_t c1 = g_pt1 & 0xff;
-  uint8_t a2 = (g_pt2 >> 16) & 0xff;
-  uint8_t b2 = (g_pt2 >> 8) & 0xff;
-  uint8_t c2 = g_pt2 & 0xff;
-  a1 = a1 ^ b1 ^ tw11;
-  c1 = c1 ^ b1 ^ tw12;
-  b1 = b1 ^ tw13;
-  a2 = a2 ^ b2 ^ tw21;
-  c2 = c2 ^ b2 ^ tw22;
-  b2 = b2 ^ tw23;
-  uint8_t app1 = (g_ct1 >> 16) & 0xff;
-  uint8_t app2 = (g_ct2 >> 16) & 0xff;
-  uint8_t cpp1 = g_ct1 & 0xff;
-  uint8_t cpp2 = g_ct2 & 0xff;
-  uint8_t bpp1 = g_sbox_dec[(g_ct1 >> 8) & 0xff] ^ app1 ^ cpp1 ^ tw16;
-  uint8_t bpp2 = g_sbox_dec[(g_ct2 >> 8) & 0xff] ^ app2 ^ cpp2 ^ tw26;
-  app1 = g_sbox_dec[app1] ^ tw14;
-  app2 = g_sbox_dec[app2] ^ tw24;
-  cpp1 = g_sbox_dec[cpp1] ^ tw15;
-  cpp2 = g_sbox_dec[cpp2] ^ tw25;
-  uint8_t da = app1 ^ app2 ^ bpp1 ^ bpp2;
-  uint8_t dc = cpp1 ^ cpp2 ^ bpp1 ^ bpp2;
+  const uint8_t tw11 = (g_tw1 >> 56) & 0xff;
+  const uint8_t tw12 = (g_tw1 >> 48) & 0xff;
+  const uint8_t tw13 = (g_tw1 >> 40) & 0xff;
+  const uint8_t tw14 = (g_tw1 >> 32) & 0xff;
+  const uint8_t tw15 = (g_tw1 >> 24) & 0xff;
+  const uint8_t tw16 = (g_tw1 >> 16) & 0xff;
+  const uint8_t tw21 = (g_tw2 >> 56) & 0xff;
+  const uint8_t tw22 = (g_tw2 >> 48) & 0xff;
+  const uint8_t tw23 = (g_tw2 >> 40) & 0xff;
+  const uint8_t tw24 = (g_tw2 >> 32) & 0xff;
+  const uint8_t tw25 = (g_tw2 >> 24) & 0xff;
+  const uint8_t tw26 = (g_tw2 >> 16) & 0xff;
+  const uint8_t b1 = ((g_pt1 >> 8) & 0xff) ^ tw13;
+  const uint8_t a1 = ((g_pt1 >> 16) ^ (g_pt1 >> 8) & 0xff) ^ tw11;
+  const uint8_t c1 = (g_pt1 ^ (g_pt1 >> 8) & 0xff) ^ tw12;
+  const uint8_t b2 = ((g_pt2 >> 8) & 0xff) ^ tw23;
+  const uint8_t a2 = ((g_pt2 >> 16) ^ (g_pt2 >> 8) & 0xff) ^ tw21;
+  const uint8_t c2 = (g_pt2 ^ (g_pt2 >> 8) & 0xff) ^ tw22;
+  const uint8_t app1 = (g_ct1 >> 16) & 0xff;
+  const uint8_t app2 = (g_ct2 >> 16) & 0xff;
+  const uint8_t cpp1 = g_ct1 & 0xff;
+  const uint8_t cpp2 = g_ct2 & 0xff;
+  const uint8_t bpp1 = g_sbox_dec[(g_ct1 >> 8) & 0xff] ^ app1 ^ cpp1 ^ tw16;
+  const uint8_t bpp2 = g_sbox_dec[(g_ct2 >> 8) & 0xff] ^ app2 ^ cpp2 ^ tw26;
+  const uint8_t sapp1 = g_sbox_dec[app1] ^ tw14;
+  const uint8_t sapp2 = g_sbox_dec[app2] ^ tw24;
+  const uint8_t scpp1 = g_sbox_dec[cpp1] ^ tw15;
+  const uint8_t scpp2 = g_sbox_dec[cpp2] ^ tw25;
+  const uint8_t da = sapp1 ^ sapp2 ^ bpp1 ^ bpp2;
+  const uint8_t dc = scpp1 ^ scpp2 ^ bpp1 ^ bpp2;
   uint8_t k1[256];
   uint8_t k2[256];
   uint16_t k1p = 0;
@@ -213,19 +206,19 @@ void crack2() {
     }
   }
   for (uint16_t i = 0; i < k1p; i++) {
-    uint8_t ap1 = g_sbox_enc[a1 ^ k1[i]];
-    uint8_t ap2 = g_sbox_enc[a2 ^ k1[i]];
+    const uint8_t ap1 = g_sbox_enc[a1 ^ k1[i]];
+    const uint8_t ap2 = g_sbox_enc[a2 ^ k1[i]];
     for (uint16_t k = 0; k < k2p; k++) {
-      uint8_t cp1 = g_sbox_enc[c1 ^ k2[k]];
-      uint8_t cp2 = g_sbox_enc[c2 ^ k2[k]];
+      const uint8_t cp1 = g_sbox_enc[c1 ^ k2[k]];
+      const uint8_t cp2 = g_sbox_enc[c2 ^ k2[k]];
       for (uint16_t k3 = 0; k3 < 256; k3++) {
-        uint8_t bp1 = g_sbox_enc[b1 ^ ap1 ^ cp1 ^ k3];
-        uint8_t bp2 = g_sbox_enc[b2 ^ ap2 ^ cp2 ^ k3];
-        uint8_t k41 = bp1 ^ ap1 ^ app1;
-        uint8_t k42 = bp2 ^ ap2 ^ app2;
-        uint8_t k51 = bp1 ^ cp1 ^ cpp1;
-        uint8_t k52 = bp2 ^ cp2 ^ cpp2;
-        uint8_t k6 = bp1 ^ bpp1;
+        const uint8_t bp1 = g_sbox_enc[b1 ^ ap1 ^ cp1 ^ k3];
+        const uint8_t bp2 = g_sbox_enc[b2 ^ ap2 ^ cp2 ^ k3];
+        const uint8_t k41 = bp1 ^ ap1 ^ sapp1;
+        const uint8_t k42 = bp2 ^ ap2 ^ sapp2;
+        const uint8_t k51 = bp1 ^ cp1 ^ scpp1;
+        const uint8_t k52 = bp2 ^ cp2 ^ scpp2;
+        const uint8_t k6 = bp1 ^ bpp1;
         if (k41 == k42 && k51 == k52) {
           uint64_t key = (uint64_t)k1[i] << 48 | (uint64_t)k2[k] << 40 | (uint64_t)k3 << 32
               | (uint64_t)k41 << 24 | (uint64_t)k51 << 16 | (uint64_t)k6 << 8;
@@ -246,104 +239,96 @@ void crack2() {
   }
 }
 
-void *crack3(void *param) {
-  (void)(param); /* Silence unused warning. */
-  pthread_mutex_lock(&g_threadcount_lock);
-  uint32_t threadid = g_threadcount++;
-  pthread_mutex_unlock(&g_threadcount_lock);
+void crack3() {
+  const uint8_t tw11 = (g_tw1 >> 56) & 0xff;
+  const uint8_t tw12 = (g_tw1 >> 48) & 0xff;
+  const uint8_t tw13 = (g_tw1 >> 40) & 0xff;
+  const uint8_t tw14 = (g_tw1 >> 32) & 0xff;
+  const uint8_t tw15 = (g_tw1 >> 24) & 0xff;
+  const uint8_t tw16 = (g_tw1 >> 16) & 0xff;
+  const uint8_t tw17 = (g_tw1 >> 8) & 0xff;
+  const uint8_t tw18 = g_tw1 & 0xff;
+  const uint8_t tw21 = (g_tw2 >> 56) & 0xff;
+  const uint8_t tw22 = (g_tw2 >> 48) & 0xff;
+  const uint8_t tw23 = (g_tw2 >> 40) & 0xff;
+  const uint8_t tw24 = (g_tw2 >> 32) & 0xff;
+  const uint8_t tw25 = (g_tw2 >> 24) & 0xff;
+  const uint8_t tw26 = (g_tw2 >> 16) & 0xff;
+  const uint8_t tw27 = (g_tw2 >> 8) & 0xff;
+  const uint8_t tw28 = g_tw2 & 0xff;
+  const uint8_t b1 = ((g_pt1 >> 8) & 0xff) ^ tw13;
+  const uint8_t a1 = ((g_pt1 >> 16) ^ (g_pt1 >> 8) & 0xff) ^ tw11;
+  const uint8_t c1 = (g_pt1 ^ (g_pt1 >> 8) & 0xff) ^ tw12;
+  const uint8_t b2 = ((g_pt2 >> 8) & 0xff) ^ tw23;
+  const uint8_t a2 = ((g_pt2 >> 16) ^ (g_pt2 >> 8) & 0xff) ^ tw21;
+  const uint8_t c2 = (g_pt2 ^ (g_pt2 >> 8) & 0xff) ^ tw22;
+  const uint8_t bppp1 = ((g_sbox_dec[(g_ct1 >> 8) & 0xff] ^ g_ct1 ^ (g_ct1 >> 16)) & 0xff) ^ tw11;
+  const uint8_t appp1 = g_sbox_dec[(g_ct1 >> 16) & 0xff] ^ tw17;
+  const uint8_t cppp1 = g_sbox_dec[g_ct1 & 0xff] ^ tw18;
+  const uint8_t bppp2 = (g_sbox_dec[(g_ct2 >> 8) & 0xff] ^ g_ct2 ^ (g_ct2 >> 16)) & 0xff ^ tw21;
+  const uint8_t appp2 = g_sbox_dec[(g_ct2 >> 16) & 0xff] ^ tw27;
+  const uint8_t cppp2 = g_sbox_dec[g_ct2 & 0xff] ^ tw28;
+  const uint8_t dbpp = bppp1 ^ bppp2;
+  const uint8_t dapp = appp1 ^ appp2 ^ dbpp;
+  const uint8_t dcpp = cppp1 ^ cppp2 ^ dbpp;
+  const uint8_t dacpp = dapp ^ dcpp;
+  const uint8_t dtw4 = tw14 ^ tw24;
+  const uint8_t dtw5 = tw15 ^ tw25;
+  const uint8_t dtw6 = tw16 ^ tw26;
 
-  /* Precalculate round tweaks. */
-  uint32_t r1tw1 = (g_tw1 >> 40);
-  uint32_t r1tw2 = (g_tw2 >> 40);
-  uint32_t r2tw1 = (g_tw1 >> 16) & 0xffffff;
-  uint32_t r2tw2 = (g_tw2 >> 16) & 0xffffff;
-  uint32_t r3tw1 = ((g_tw1 >> 56) | (g_tw1 << 8)) & 0xffffff;
-  uint32_t r3tw2 = ((g_tw2 >> 56) | (g_tw2 << 8)) & 0xffffff;
-
-  /* Create a hash table associating differentials after first round with subkey. */
-  if (pthread_mutex_trylock(&g_first_lock) == 0) {
-    g_lists = (struct delta**)calloc(0x1000000, sizeof(struct delta*));
-    g_items = (struct delta*)malloc(0x1000000 * sizeof(struct delta));
-    if (g_lists == NULL || g_items == NULL) {
-      fprintf(stderr, "Error: malloc returned null in thread %" PRIu32 ".\n", threadid);
-      if (g_items != NULL) {
-        free(g_items);
-      }
-      if (g_lists != NULL) {
-        free(g_lists);
-      }
-      g_items = NULL;
-      g_lists = NULL;
-      pthread_mutex_unlock(&g_first_lock);
-      pthread_mutex_lock(&g_threadcount_lock);
-      g_threadcount -= 1;
-      pthread_mutex_unlock(&g_threadcount_lock);
-      return NULL;
-    }
-
-    for (uint32_t k1 = 0; k1 < 0x1000000; k1++) {
-      uint32_t delta = enc_one_round(g_pt1, k1 ^ r1tw1) ^ enc_one_round(g_pt2, k1 ^ r1tw2);
-      if (g_lists[delta] == NULL) {
-        g_lists[delta] = &(g_items[k1]);
-        g_lists[delta]->key = k1;
-        g_lists[delta]->next = NULL;
-        g_lists[delta]->last = g_lists[delta];
-      } else {
-        g_lists[delta]->last->next = &(g_items[k1]);
-        g_lists[delta]->last = &(g_items[k1]);
-        g_lists[delta]->last->key = k1;
-        g_lists[delta]->last->next = NULL;
-      }
-    }
-    pthread_mutex_unlock(&g_first_lock);
-  } else {
-    pthread_mutex_lock(&g_first_lock);
-    pthread_mutex_unlock(&g_first_lock);
-    if (g_lists == NULL) {
-      pthread_mutex_lock(&g_threadcount_lock);
-      g_threadcount -= 1;
-      pthread_mutex_unlock(&g_threadcount_lock);
-      return NULL;
-    }
-  }
-
-  uint32_t outer;
-  while ((outer = get_next()) < 0x10000) {
-    for (uint16_t inner = 0; inner < 0x100; inner++) {
-      uint32_t k3 = outer << 8 | inner;
-      uint32_t delta = dec_one_round(dec_one_round(g_ct1, r3tw1 ^ k3), r2tw1)
-          ^ dec_one_round(dec_one_round(g_ct2, r3tw2 ^ k3), r2tw2);
-      struct delta *next = g_lists[delta];
-      while (next != NULL) {
-        uint32_t k1 = next->key;
-        if (((k1 >> 8) ^ (k3 & 0xffff)) == 0) {
-          uint32_t k2 = enc_one_round(g_pt1, k1 ^ r1tw1)
-              ^ dec_one_round(dec_one_round(g_ct1, k3 ^ r3tw1), r2tw1);
-          k2 = k2 ^ ((k2 & 0xff00) << 8) ^ ((k2 & 0xff00) >> 8);
-          k2 = (k2 & 0xff0000) | ((k2 & 0xff) << 8) | ((k2 & 0xff00) >> 8);
-          uint64_t key = (uint64_t)k1 << 32 | k2 << 8 | k3 >> 16;
-          if (g_pt3 == (uint32_t)-1 || encrypt_lattice(3, g_pt3, key, g_tw3) == g_ct3) {
-            pthread_mutex_lock(&g_write_lock);
-            fprintf(g_outfp, "%014" PRIx64 "\n", key);
-            g_keysfound += 1;
-            pthread_mutex_unlock(&g_write_lock);
+  for (uint16_t k2 = 0; k2 < 256; k2++) {
+    const uint8_t bpp1 = bppp1 ^ k2;
+    const uint8_t bpp2 = bppp2 ^ k2;
+    const uint8_t sbpp1 = g_sbox_dec[bpp1];
+    const uint8_t sbpp2 = g_sbox_dec[bpp2];
+    const uint8_t dfbpp = sbpp1 ^ sbpp2 ^ dtw6;
+    const uint8_t cp1 = g_sbox_enc[c1 ^ k2];
+    const uint8_t cp2 = g_sbox_enc[c2 ^ k2];
+    const uint8_t dcp = cp1 ^ cp2;
+    for (uint16_t k1 = 0; k1 < 256; k1++) {
+      const uint8_t ap1 = g_sbox_enc[a1 ^ k1];
+      const uint8_t ap2 = g_sbox_enc[a2 ^ k1];
+      const uint8_t cpp1 = cppp1 ^ k1 ^ bpp1;
+      const uint8_t cpp2 = cppp2 ^ k1 ^ bpp2;
+      const uint8_t scpp1 = g_sbox_dec[cpp1];
+      const uint8_t scpp2 = g_sbox_dec[cpp2];
+      const uint8_t dbp = dcp ^ scpp1 ^ scpp2 ^ dtw5;
+      if (dfbpp == (dacpp ^ dbp)) {
+        const uint8_t dap = g_sbox_enc[a1 ^ k1] ^ g_sbox_enc[a2 ^ k1] ^ dtw4;
+        for (uint16_t k7 = 0; k7 < 256; k7++) {
+          const uint8_t app1 = appp1 ^ bpp1 ^ k7;
+          const uint8_t app2 = appp2 ^ bpp2 ^ k7;
+          const uint8_t sapp1 = g_sbox_dec[app1];
+          const uint8_t sapp2 = g_sbox_dec[app2];
+          if ((sapp1 ^ sapp2 ^ dap) == dbp) {
+            for (uint16_t k3 = 0; k3 < 256; k3++) {
+              const uint8_t bp1 = g_sbox_enc[ap1 ^ cp1 ^ b1 ^ k3];
+              const uint8_t bp2 = g_sbox_enc[ap2 ^ cp2 ^ b2 ^ k3];
+              const uint8_t k41 = sapp1 ^ ap1 ^ bp1 ^ tw14;
+              const uint8_t k42 = sapp2 ^ ap2 ^ bp2 ^ tw24;
+              const uint8_t k5 = scpp1 ^ cp1 ^ bp1 ^ tw15;
+              const uint8_t k6 = sbpp1 ^ app1 ^ cpp1 ^ bp1 ^ tw16;
+              if (k41 == k42) {
+                uint64_t key = (uint64_t)k1 << 48 | (uint64_t)k2 << 40 | (uint64_t)k3 << 32
+                    | (uint64_t)k41 << 24 | (uint64_t)k5 << 16 | (uint64_t)k6 << 8 | k7;
+                if (g_pt3 == (uint32_t)-1 || encrypt_lattice(3, g_pt3, key, g_tw3) == g_ct3) {
+                  fprintf(g_outfp, "%014" PRIx64 "\n", key);
+                  g_keysfound += 1;
+                }
+              }
+            }
           }
         }
-        next = next->next;
       }
     }
   }
-
-  pthread_mutex_lock(&g_threadcount_lock);
-  g_threadcount -= 1;
-  if (g_threadcount == 0) {
-    free(g_items);
-    free(g_lists);
-    g_items = NULL;
-    g_lists = NULL;
+  if (g_keysfound == 0) {
+    printf("No keys found.\n");
+  } else if (g_keysfound == 1) {
+    printf("1 key found.\n");
+  } else {
+    printf("%" PRIu64 " keys found.\n", g_keysfound);
   }
-  pthread_mutex_unlock(&g_threadcount_lock);
-  return NULL;
 }
 
 void *crack4(void *param) {
@@ -422,13 +407,12 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  uint32_t nrounds = atoi(argv[1]);
   void *(*crack_func)(void*) = NULL;
-  switch (atoi(argv[1])) {
+  switch (nrounds) {
     case 2:
-      /* Handle separately below. */
-      break;
     case 3:
-      crack_func = crack3;
+      /* Handle separately below. */
       break;
     case 4:
       crack_func = crack4;
@@ -460,9 +444,13 @@ int main(int argc, char **argv) {
     printf("PT3: %06" PRIx32 " CT3: %06" PRIx32 " TW3: %016" PRIx64 "\n", g_pt3, g_ct3, g_tw3);
   }
 
-  /* Two rounds. */
-  if (atoi(argv[1]) == 2) {
-    crack2();
+  /* Two or three rounds. */
+  if (nrounds == 2 || nrounds == 3) {
+    if (nrounds == 2) {
+      crack2();
+    } else {
+      crack3();
+    }
     fclose(g_outfp);
     return 0;
   }
