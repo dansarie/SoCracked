@@ -1,7 +1,7 @@
 /* latticecracker
    Attacks two, three or four rounds of the Lattice algorithm as specified in MIL-STD-188-141 and
    recovers all candidate keys in 2^10 - 2^12 time for two rounds, 2^17 time for three rounds, and
-   2^40 time for four rounds of encryption.
+   2^33 time for four rounds of encryption.
    Copyright (C) 2016 Marcus Dansarie <marcus@dansarie.se>
 
    This program is free software: you can redistribute it and/or modify
@@ -60,22 +60,13 @@ const uint8_t g_sbox_enc[] = {0x9c, 0xf2, 0x14, 0xc1, 0x8e, 0xcb, 0xb2, 0x65,
                               0x2b, 0xae, 0x36, 0xda, 0x7e, 0x86, 0x35, 0x51,
                               0x05, 0x12, 0xb8, 0xa6, 0x9a, 0x2c, 0x06, 0x4b};
 
-struct delta {
-    uint32_t key;
-    struct delta *next;
-    struct delta *last;
-};
-
 pthread_mutex_t g_next_lock;
 pthread_mutex_t g_write_lock;
 pthread_mutex_t g_threadcount_lock;
-pthread_mutex_t g_first_lock;
 uint64_t g_keysfound = 0;
 uint32_t g_threadcount = 0;    /* Number of working threads. */
 uint32_t g_next = 0;           /* Next work unit. (Value of key bytes 1 and 2.) */
 FILE *g_outfp = NULL;          /* Pointer to output file. */
-struct delta **g_lists = NULL; /* Table of linked lists for associating differential with key. */
-struct delta *g_items = NULL;  /* List of all instances used to build table in g_lists. */
 
 /* Known plaintexts, ciphertexts and tweaks. If only two are used g_pt3 = g_tw3 = g_ct3 = -1. */
 uint32_t g_pt1 = (uint32_t)-1;
@@ -334,46 +325,139 @@ void crack3() {
 void *crack4(void *param) {
   (void)(param); /* Silence unused warning. */
   pthread_mutex_lock(&g_threadcount_lock);
-  g_threadcount++;
+  uint32_t threadid = g_threadcount++;
   pthread_mutex_unlock(&g_threadcount_lock);
 
   /* Precalculate tweaks. */
-  uint32_t r1tw = (g_tw1 >> 40);
-  uint32_t r4tw = (g_tw1 >> 32) & 0xffffff;
-  uint8_t tw1 = g_tw1 >> 56;
-  uint8_t tw4 = (g_tw1 >> 32) & 0xff;
-  uint8_t tw5 = (g_tw1 >> 24) & 0xff;
-  uint8_t tw6 = (g_tw1 >> 16) & 0xff;
-  uint8_t tw7 = (g_tw1 >> 8) & 0xff;
+  const uint32_t r1tw1 = g_tw1 >> 40;
+  const uint32_t r1tw2 = g_tw2 >> 40;
+  const uint32_t r4tw1 = (g_tw1 >> 32) & 0xffffff;
+  const uint32_t r4tw2 = (g_tw2 >> 32) & 0xffffff;
+  const uint8_t tw11 = (g_tw1 >> 56) & 0xff;
+  const uint8_t tw14 = (g_tw1 >> 32) & 0xff;
+  const uint8_t tw15 = (g_tw1 >> 24) & 0xff;
+  const uint8_t tw16 = (g_tw1 >> 16) & 0xff;
+  const uint8_t tw17 = (g_tw1 >> 8) & 0xff;
+  const uint8_t tw18 = g_tw1 & 0xff;
+  const uint8_t tw21 = (g_tw2 >> 56) & 0xff;
+  const uint8_t tw24 = (g_tw2 >> 32) & 0xff;
+  const uint8_t tw25 = (g_tw2 >> 24) & 0xff;
+  const uint8_t tw26 = (g_tw2 >> 16) & 0xff;
+  const uint8_t tw27 = (g_tw2 >> 8) & 0xff;
+  const uint8_t tw28 = g_tw2 & 0xff;
 
-  uint32_t k12;
-  while ((k12 = get_next()) < 0x10000) {
-    uint8_t k2 = k12 & 0xff;
-    for (uint32_t k345 = 0; k345 < 0x1000000; k345++) {
-      uint32_t k123 = (k12 << 8) | (k345 >> 16);
-      uint32_t r1ct = enc_one_round(g_pt1, k123 ^ r1tw);
-      uint32_t r3ct = dec_one_round(g_ct1, k345 ^ r4tw);
-      uint8_t k4 = (k345 >> 8) & 0xff;
-      uint8_t k5 = k345 & 0xff;
-      uint8_t app = r3ct >> 16;
-      uint8_t bpp = (r3ct >> 8) & 0xff;
-      uint8_t cpp = r3ct & 0xff;
-      uint8_t a = r1ct >> 16;
-      uint8_t b = (r1ct >> 8) & 0xff;
-      uint8_t c = r1ct & 0xff;
-      uint8_t ap = g_sbox_enc[a ^ b ^ k4 ^ tw4];
-      uint8_t cp = g_sbox_enc[b ^ c ^ k5 ^ tw5];
-      uint8_t bp = g_sbox_dec[bpp] ^ app ^ cpp ^ k2 ^ tw1;
-      uint8_t k6 = g_sbox_dec[bp] ^ ap ^ b ^ cp ^ tw6;
-      uint8_t k7 = g_sbox_dec[app] ^ ap ^ bp ^ tw7;
-      uint64_t kkey = ((uint64_t)k123 << 32) | ((uint64_t)k4) << 24 | ((uint64_t)k5) << 16
-          | ((uint64_t)k6) << 8 | k7;
-      if (encrypt_lattice(4, g_pt2, kkey, g_tw2) == g_ct2) {
-        if (g_pt3 == (uint32_t)-1 || encrypt_lattice(4, g_pt3, kkey, g_tw3) == g_ct3) {
-          pthread_mutex_lock(&g_write_lock);
-          fprintf(g_outfp, "%014" PRIx64 "\n", kkey);
-          g_keysfound += 1;
-          pthread_mutex_unlock(&g_write_lock);
+  struct delta {
+    uint8_t k5;
+    uint8_t app1;
+    uint8_t app2;
+    uint8_t bpp1;
+    uint8_t bpp2;
+    uint8_t cpp1;
+    uint8_t cpp2;
+    struct delta *next;
+    struct delta *last;
+  };
+
+  struct delta **lists = (struct delta**)malloc(0x10000 * sizeof(struct delta*));
+  struct delta *items = (struct delta*)malloc(0x10000 * sizeof(struct delta));
+  if (lists == NULL || items == NULL) {
+    fprintf(stderr, "Error: malloc returned null in thread %" PRIu32 ".\n", threadid);
+    if (lists != NULL) {
+      free(lists);
+    }
+    if (items != NULL) {
+      free(items);
+    }
+    pthread_mutex_lock(&g_threadcount_lock);
+    g_threadcount -= 1;
+    pthread_mutex_unlock(&g_threadcount_lock);
+    return NULL;
+  }
+
+  uint32_t k23;
+  while ((k23 = get_next()) < 0x10000) {
+    const uint8_t k2 = k23 >> 8;
+    const uint8_t k3 = k23 & 0xff;
+    memset(lists, 0, 0x10000 * sizeof(struct delta*));
+    for (uint32_t k45 = 0; k45 < 0x10000; k45++) {
+      const uint8_t k4 = k45 >> 8;
+      const uint8_t k5 = k45 & 0xff;
+      const uint32_t k345 = ((uint32_t)k3 << 16) | k45;
+      const uint32_t r31 = dec_one_round(g_ct1, k345 ^ r4tw1);
+      const uint32_t r32 = dec_one_round(g_ct2, k345 ^ r4tw2);
+      const uint8_t r31a = (r31 >> 16) & 0xff;
+      const uint8_t r31b = (r31 >> 8) & 0xff;
+      const uint8_t r31c = r31 & 0xff;
+      const uint8_t bpp1 = g_sbox_dec[r31b] ^ r31a ^ r31c ^ k2 ^ tw11;
+      const uint8_t r32a = (r32 >> 16) & 0xff;
+      const uint8_t r32b = (r32 >> 8) & 0xff;
+      const uint8_t r32c = r32 & 0xff;
+      const uint8_t bpp2 = g_sbox_dec[r32b] ^ r32a ^ r32c ^ k2 ^ tw21;
+      const uint8_t app1 = g_sbox_dec[r31a] ^ bpp1 ^ tw17;
+      const uint8_t app2 = g_sbox_dec[r32a] ^ bpp2 ^ tw27;
+      const uint8_t cpp1 = g_sbox_dec[r31c] ^ bpp1 ^ tw18;
+      const uint8_t cpp2 = g_sbox_dec[r32c] ^ bpp2 ^ tw28;
+      const uint16_t addr = k4 * 256 + (app1 ^ app2);
+      if (lists[addr] == NULL) {
+        lists[addr] = &(items[k45]);
+        lists[addr]->k5 = k5;
+        lists[addr]->next = NULL;
+        lists[addr]->last = lists[addr];
+        lists[addr]->app1 = app1;
+        lists[addr]->app2 = app2;
+        lists[addr]->bpp1 = bpp1;
+        lists[addr]->bpp2 = bpp2;
+        lists[addr]->cpp1 = cpp1;
+        lists[addr]->cpp2 = cpp2;
+      } else {
+        lists[addr]->last->next = &(items[k45]);
+        lists[addr]->last = &(items[k45]);
+        lists[addr]->last->k5 = k5;
+        lists[addr]->last->next = NULL;
+        lists[addr]->last->app1 = app1;
+        lists[addr]->last->app2 = app2;
+        lists[addr]->last->bpp1 = bpp1;
+        lists[addr]->last->bpp2 = bpp2;
+        lists[addr]->last->cpp1 = cpp1;
+        lists[addr]->last->cpp2 = cpp2;
+      }
+    }
+    for (uint16_t k1 = 0; k1 < 256; k1++) {
+      const uint32_t k123 = ((uint32_t)k1 << 16) | ((uint32_t)k2 << 8) | k3;
+      const uint32_t r11 = enc_one_round(g_pt1, k123 ^ r1tw1);
+      const uint32_t r12 = enc_one_round(g_pt2, k123 ^ r1tw2);
+      const uint8_t r11a = r11 >> 16;
+      const uint8_t r11b = (r11 >> 8) & 0xff;
+      const uint8_t r12a = r12 >> 16;
+      const uint8_t r12b = (r12 >> 8) & 0xff;
+      for (uint16_t k4 = 0; k4 < 256; k4++) {
+        const uint8_t app1 = g_sbox_enc[r11a ^ r11b ^ k4 ^ tw14];
+        const uint8_t app2 = g_sbox_enc[r12a ^ r12b ^ k4 ^ tw24];
+        struct delta *next = lists[k4 * 256 + (app1 ^ app2)];
+        while (next != NULL) {
+          const uint8_t r11c = r11 & 0xff;
+          const uint8_t r12c = r12 & 0xff;
+          const uint8_t cpp1 = g_sbox_enc[r11b ^ r11c ^ next->k5 ^ tw15];
+          const uint8_t cpp2 = g_sbox_enc[r12b ^ r12c ^ next->k5 ^ tw25];
+          const uint8_t k11 = cpp1 ^ next->cpp1;
+          const uint8_t k12 = cpp2 ^ next->cpp2;
+          const uint8_t k61 = r11b ^ app1 ^ cpp1 ^ tw16 ^ g_sbox_dec[next->bpp1];
+          const uint8_t k62 = r12b ^ app2 ^ cpp2 ^ tw26 ^ g_sbox_dec[next->bpp2];
+          const uint8_t k71 = app1 ^ next->app1;
+          const uint8_t k72 = app2 ^ next->app2;
+          if (k11 == k12 && k61 == k62 && k71 == k72) {
+            const uint64_t key = ((uint64_t)k123 << 32) | ((uint64_t)k4) << 24
+                | ((uint64_t)(next->k5)) << 16 | ((uint64_t)k61) << 8 | k71;
+            if (encrypt_lattice(4, g_pt1, key, g_tw1) == g_ct1
+                && encrypt_lattice(4, g_pt2, key, g_tw2) == g_ct2
+                && (g_pt3 == (uint32_t)-1 || encrypt_lattice(4, g_pt3, key, g_tw3) == g_ct3)) {
+              pthread_mutex_lock(&g_write_lock);
+              fprintf(g_outfp, "%014" PRIx64 "\n", key);
+              g_keysfound += 1;
+              pthread_mutex_unlock(&g_write_lock);
+            }
+          }
+          next = next->next;
         }
       }
     }
@@ -457,8 +541,7 @@ int main(int argc, char **argv) {
 
   if (pthread_mutex_init(&g_next_lock, NULL) != 0
       || pthread_mutex_init(&g_threadcount_lock, NULL) != 0
-      || pthread_mutex_init(&g_write_lock, NULL) != 0
-      || pthread_mutex_init(&g_first_lock, NULL) != 0) {
+      || pthread_mutex_init(&g_write_lock, NULL) != 0) {
     fprintf(stderr, "Mutex init failed.\n");
     fclose(g_outfp);
     return 1;
@@ -495,7 +578,6 @@ int main(int argc, char **argv) {
   pthread_mutex_destroy(&g_next_lock);
   pthread_mutex_destroy(&g_threadcount_lock);
   pthread_mutex_destroy(&g_write_lock);
-  pthread_mutex_destroy(&g_first_lock);
   fclose(g_outfp);
   printf("\n");
 
