@@ -109,11 +109,11 @@ static inline uint32_t enc_one_round(uint32_t pt, uint32_t rkey) {
   uint8_t pb = (pt >> 8) & 0xff;
   uint8_t pc = pt & 0xff;
   uint8_t ka = rkey >> 16;
-  uint8_t kb = (rkey >> 8) & 0xff;
-  uint8_t kc = rkey & 0xff;
+  uint8_t kc = (rkey >> 8) & 0xff;
+  uint8_t kb = rkey & 0xff;
   uint8_t ca = g_sbox_enc[pa ^ pb ^ ka];
-  uint8_t cc = g_sbox_enc[pc ^ pb ^ kb];
-  uint8_t cb = g_sbox_enc[ca ^ pb ^ cc ^ kc];
+  uint8_t cc = g_sbox_enc[pc ^ pb ^ kc];
+  uint8_t cb = g_sbox_enc[ca ^ pb ^ cc ^ kb];
   return (ca << 16) | (cb << 8) | cc;
 }
 
@@ -122,10 +122,10 @@ static inline uint32_t dec_one_round(uint32_t ct, uint32_t rkey) {
   uint8_t cb = (ct >> 8) & 0xff;
   uint8_t cc = ct & 0xff;
   uint8_t ka = rkey >> 16;
-  uint8_t kb = (rkey >> 8) & 0xff;
-  uint8_t kc = rkey & 0xff;
-  uint8_t pb = g_sbox_dec[cb] ^ ca ^ cc ^ kc;
-  uint8_t pc = g_sbox_dec[cc] ^ pb ^ kb;
+  uint8_t kc = (rkey >> 8) & 0xff;
+  uint8_t kb = rkey & 0xff;
+  uint8_t pb = g_sbox_dec[cb] ^ ca ^ cc ^ kb;
+  uint8_t pc = g_sbox_dec[cc] ^ pb ^ kc;
   uint8_t pa = g_sbox_dec[ca] ^ pb ^ ka;
   return (pa << 16) | (pb << 8) | pc;
 }
