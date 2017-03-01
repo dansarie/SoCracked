@@ -1,7 +1,7 @@
 /* latticecracker
-   Attacks two, three or four rounds of the Lattice algorithm as specified in MIL-STD-188-141 and
-   recovers all candidate keys in 2^10 - 2^12 time for two rounds, 2^17 time for three rounds, and
-   2^33 time for four rounds of encryption.
+   Attacks two, three, four or five rounds of the Lattice algorithm as specified in MIL-STD-188-141
+   and recovers all candidate keys in 2^10 - 2^12 time for two rounds, 2^17 time for three rounds,
+   2^33 time for four rounds, and 2^49 time for five rounds.
    Copyright (C) 2016 Marcus Dansarie <marcus@dansarie.se>
 
    This program is free software: you can redistribute it and/or modify
@@ -65,7 +65,7 @@ pthread_mutex_t g_write_lock;
 pthread_mutex_t g_threadcount_lock;
 uint64_t g_keysfound = 0;
 uint32_t g_threadcount = 0;    /* Number of working threads. */
-uint32_t g_next = 0;           /* Next work unit. (Value of key bytes 1 and 2.) */
+uint32_t g_next = 0;           /* Next work unit. (Value of two key bytes.) */
 FILE *g_outfp = NULL;          /* Pointer to output file. */
 
 /* Known plaintexts, ciphertexts and tweaks. If only two are used g_pt3 = g_tw3 = g_ct3 = -1. */
@@ -103,6 +103,7 @@ uint32_t get_next();
 
 /* The cracking functions. The argument is not used. */
 void *crack4(void *param);
+void *crack5(void *param);
 
 static inline uint32_t enc_one_round(uint32_t pt, uint32_t rkey) {
   uint8_t pa = pt >> 16;
@@ -470,6 +471,107 @@ void *crack4(void *param) {
   return NULL;
 }
 
+void *crack5(void *param) {
+  (void)(param); /* Silence unused warning. */
+  pthread_mutex_lock(&g_threadcount_lock);
+  uint32_t threadid = g_threadcount++;
+  pthread_mutex_unlock(&g_threadcount_lock);
+
+  /* Precalculate tweaks. */
+  const uint32_t r1tw1 = g_tw1 >> 40;
+  const uint32_t r1tw2 = g_tw2 >> 40;
+  const uint32_t r2tw1 = (g_tw1 >> 16) & 0xffffff;
+  const uint32_t r2tw2 = (g_tw2 >> 16) & 0xffffff;
+  const uint32_t r4tw1 = (g_tw1 >> 32) & 0xffffff;
+  const uint32_t r4tw2 = (g_tw2 >> 32) & 0xffffff;
+  const uint32_t r5tw1 = (g_tw1 >> 8) & 0xffffff;
+  const uint32_t r5tw2 = (g_tw2 >> 8) & 0xffffff;
+
+  struct delta {
+    uint8_t k2;
+    uint32_t delta;
+    struct delta *next;
+    struct delta *last;
+  };
+
+  struct delta items[0x100];
+  struct delta *lists[0x100];
+
+  uint32_t k13;
+  while ((k13 = get_next()) < 0x10000) {
+    const uint8_t k1 = k13 >> 8;
+    const uint8_t k3 = k13 & 0xff;
+    for (uint32_t k456 = 0x1ce7be; k456 < 0x1000000; k456++) {
+      const uint64_t pkey = ((uint64_t)k1 << 48) | ((uint64_t)k3 << 32) | ((uint64_t)k456 << 8);
+      uint32_t k345 = ((uint32_t)k3 << 16) | (k456 >> 8);
+      memset(lists, 0, 0x100 * sizeof(struct delta*));
+      for (uint16_t k2 = 0; k2 < 0x100; k2++) {
+        uint32_t k123 = ((uint32_t)k1 << 16) | (k2 << 8) | k3;
+        uint32_t v1 = enc_one_round(enc_one_round(g_pt1, k123 ^ r1tw1), k456 ^ r2tw1);
+        uint32_t v2 = enc_one_round(enc_one_round(g_pt2, k123 ^ r1tw2), k456 ^ r2tw2);
+        uint32_t delta = v1 ^ v2;
+        uint8_t addr = delta & 0xff;
+        if (lists[addr] == NULL) {
+          lists[addr] = &(items[k2]);
+          lists[addr]->k2 = k2;
+          lists[addr]->delta = delta;
+          lists[addr]->next = NULL;
+          lists[addr]->last = lists[addr];
+        } else {
+          lists[addr]->last->next = &(items[k2]);
+          lists[addr]->last = &(items[k2]);
+          lists[addr]->last->k2 = k2;
+          lists[addr]->last->delta = delta;
+          lists[addr]->last->next = NULL;
+        }
+      }
+      for (uint16_t k7 = 0; k7 < 0x100; k7++) {
+        uint32_t k671 = ((k456 & 0xff) << 16) | (k7 << 8) | k1;
+        uint32_t v1 = dec_one_round(dec_one_round(g_ct1, k671 ^ r5tw1), k345 ^ r4tw1);
+        uint32_t v2 = dec_one_round(dec_one_round(g_ct2, k671 ^ r5tw2), k345 ^ r4tw2);
+        uint32_t db = g_sbox_dec[(v1 >> 8) & 0xff];
+        db ^= g_sbox_dec[(v2 >> 8) & 0xff];
+        db ^= v1;
+        db ^= v2;
+        db ^= v1 >> 16;
+        db ^= v2 >> 16;
+        db &= 0xff;
+        uint32_t da = g_sbox_dec[v1 >> 16];
+        da ^= g_sbox_dec[v2 >> 16];
+        da ^= db;
+        uint32_t dc = g_sbox_dec[v1 & 0xff];
+        dc ^= g_sbox_dec[v2 & 0xff];
+        dc ^= db;
+        uint32_t delta = (da << 16) | (db << 8) | dc;
+        uint8_t addr = delta & 0xff;
+        struct delta *next = lists[addr];
+        while (next != NULL) {
+          if (next->delta != delta) {
+            next = next->next;
+            continue;
+          }
+          const uint64_t key = pkey | k7 | ((uint64_t)next->k2 << 40);
+          if (encrypt_lattice(5, g_pt1, key, g_tw1) == g_ct1
+              && encrypt_lattice(5, g_pt2, key, g_tw2) == g_ct2
+              && (g_pt3 == (uint32_t)-1 || encrypt_lattice(5, g_pt3, key, g_tw3) == g_ct3)) {
+            pthread_mutex_lock(&g_write_lock);
+            fprintf(g_outfp, "%014" PRIx64 "\n", key);
+            g_keysfound += 1;
+            pthread_mutex_unlock(&g_write_lock);
+          }
+          next = next->next;
+        }
+      }
+    }
+  }
+
+  pthread_mutex_lock(&g_threadcount_lock);
+  g_threadcount -= 1;
+  pthread_mutex_unlock(&g_threadcount_lock);
+
+  return NULL;
+}
+
 int main(int argc, char **argv) {
   /* Fill lookup table for the inverse s-box. */
   for (uint16_t i = 0; i < 256; i++) {
@@ -501,8 +603,11 @@ int main(int argc, char **argv) {
     case 4:
       crack_func = crack4;
       break;
+    case 5:
+      crack_func = crack5;
+      break;
     default:
-      fprintf(stderr, "Bad number of rounds. Only 2, 3, and 4 rounds are supported.\n");
+      fprintf(stderr, "Bad number of rounds. Only 2, 3, 4, and 5 rounds are supported.\n");
       return 1;
   }
 
