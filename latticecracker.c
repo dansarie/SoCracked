@@ -2,7 +2,7 @@
    Attacks two, three, four or five rounds of the Lattice algorithm as specified in MIL-STD-188-141
    and recovers all candidate keys in 2^10 - 2^12 time for two rounds, 2^17 time for three rounds,
    2^33 time for four rounds, and 2^49 time for five rounds.
-   Copyright (C) 2016 Marcus Dansarie <marcus@dansarie.se>
+   Copyright (C) 2016-2017 Marcus Dansarie <marcus@dansarie.se>
 
    This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
