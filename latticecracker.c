@@ -96,7 +96,7 @@ static inline uint32_t dec_one_round(uint32_t ct, uint32_t rkey);
    tweak  Tweak (64 bits). */
 static inline uint32_t encrypt_lattice(uint8_t rounds, uint32_t pt, uint64_t key, uint64_t tweak);
 
-/* Returns the next work unit, i.e. the next value of key bytes 1 and 2.
+/* Returns the next work unit, i.e. the next value of two key bytes.
    A return value of 0x10000 indicates that there are no more work units available and that the
    thread should stop. */
 uint32_t get_next();
@@ -594,21 +594,9 @@ int main(int argc, char **argv) {
   }
 
   uint32_t nrounds = atoi(argv[1]);
-  void *(*crack_func)(void*) = NULL;
-  switch (nrounds) {
-    case 2:
-    case 3:
-      /* Handle separately below. */
-      break;
-    case 4:
-      crack_func = crack4;
-      break;
-    case 5:
-      crack_func = crack5;
-      break;
-    default:
-      fprintf(stderr, "Bad number of rounds. Only 2, 3, 4, and 5 rounds are supported.\n");
-      return 1;
+  if (nrounds < 2 || nrounds > 5) {
+    fprintf(stderr, "Bad number of rounds. Only 2, 3, 4, and 5 rounds are supported.\n");
+    return 1;
   }
 
   g_outfp = fopen(argv[2], "w");
@@ -633,15 +621,24 @@ int main(int argc, char **argv) {
     printf("PT3: %06" PRIx32 " CT3: %06" PRIx32 " TW3: %016" PRIx64 "\n", g_pt3, g_ct3, g_tw3);
   }
 
-  /* Two or three rounds. */
-  if (nrounds == 2 || nrounds == 3) {
-    if (nrounds == 2) {
+  void *(*crack_func)(void*) = NULL;
+  switch (nrounds) {
+    case 2:
       crack2();
-    } else {
+      fclose(g_outfp);
+      return 0;
+    case 3:
       crack3();
-    }
-    fclose(g_outfp);
-    return 0;
+      fclose(g_outfp);
+      return 0;
+    case 4:
+      crack_func = crack4;
+      break;
+    case 5:
+      crack_func = crack5;
+      break;
+    default:
+      assert(0);
   }
 
   if (pthread_mutex_init(&g_next_lock, NULL) != 0
