@@ -1,7 +1,9 @@
-/* latticecracker
-   Attacks two, three, four or five rounds of the Lattice algorithm as specified in MIL-STD-188-141
+/* SoCracked
+
+   Attacks two, three, four or five rounds of the SoDark algorithm as specified in MIL-STD-188-141
    and recovers all candidate keys in 2^10 - 2^12 time for two rounds, 2^17 time for three rounds,
    2^33 time for four rounds, and 2^49 time for five rounds.
+
    Copyright (C) 2016-2017 Marcus Dansarie <marcus@dansarie.se>
 
    This program is free software: you can redistribute it and/or modify
@@ -25,7 +27,7 @@
 #include <string.h>
 #include <unistd.h>
 
-/* Lookup tables for the Lattice algorithm s-box. */
+/* Lookup tables for the SoDark algorithm s-box. */
 uint8_t g_sbox_dec[256];
 const uint8_t g_sbox_enc[] = {0x9c, 0xf2, 0x14, 0xc1, 0x8e, 0xcb, 0xb2, 0x65,
                               0x97, 0x7a, 0x60, 0x17, 0x92, 0xf9, 0x78, 0x41,
@@ -79,22 +81,22 @@ uint32_t g_ct1 = (uint32_t)-1;
 uint32_t g_ct2 = (uint32_t)-1;
 uint32_t g_ct3 = (uint32_t)-1;
 
-/* Do one round of encryption with the Lattice algorithm.
+/* Do one round of encryption with the SoDark algorithm.
    pt   Plaintext (24 bits).
    rkey Round key, i.e. the three key bytes xored with three bytes of tweak. */
 static inline uint32_t enc_one_round(uint32_t pt, uint32_t rkey);
 
-/* Do one round of decryption with the Lattice algorithm.
+/* Do one round of decryption with the SoDark algorithm.
    ct   Ciphertext (24 bits).
    rkey Round key, i.e. the three key bytes xored with three bytes of tweak. */
 static inline uint32_t dec_one_round(uint32_t ct, uint32_t rkey);
 
-/* Do three rounds of encryption with the Lattice algorithm.
+/* Do three rounds of encryption with the SoDark algorithm.
    rounds Number of rounds (1-8).
    pt     Plaintext (24 bits).
    key    Encryption key (56 bits).
    tweak  Tweak (64 bits). */
-static inline uint32_t encrypt_lattice(uint8_t rounds, uint32_t pt, uint64_t key, uint64_t tweak);
+static inline uint32_t encrypt_sodark(uint8_t rounds, uint32_t pt, uint64_t key, uint64_t tweak);
 
 /* Returns the next work unit, i.e. the next value of two key bytes.
    A return value of 0x10000 indicates that there are no more work units available and that the
@@ -131,7 +133,7 @@ static inline uint32_t dec_one_round(uint32_t ct, uint32_t rkey) {
   return (pa << 16) | (pb << 8) | pc;
 }
 
-static inline uint32_t encrypt_lattice(uint8_t rounds, uint32_t pt, uint64_t key, uint64_t tweak) {
+static inline uint32_t encrypt_sodark(uint8_t rounds, uint32_t pt, uint64_t key, uint64_t tweak) {
   uint32_t ct = pt;
   for (uint8_t round = 0; round < rounds; round++) {
     uint32_t rkey = (key >> 32) ^ (tweak >> 40);
@@ -214,7 +216,7 @@ void crack2() {
         if (k41 == k42 && k51 == k52) {
           uint64_t key = (uint64_t)k1[i] << 48 | (uint64_t)k2[k] << 40 | (uint64_t)k3 << 32
               | (uint64_t)k41 << 24 | (uint64_t)k51 << 16 | (uint64_t)k6 << 8;
-          if (g_pt3 == (uint32_t)-1 || encrypt_lattice(2, g_pt3, key, g_tw3) == g_ct3) {
+          if (g_pt3 == (uint32_t)-1 || encrypt_sodark(2, g_pt3, key, g_tw3) == g_ct3) {
             fprintf(g_outfp, "%014" PRIx64 "\n", key);
             g_keysfound += 1;
           }
@@ -303,7 +305,7 @@ void crack3() {
               if (k41 == k42) {
                 uint64_t key = (uint64_t)k1 << 48 | (uint64_t)k2 << 40 | (uint64_t)k3 << 32
                     | (uint64_t)k41 << 24 | (uint64_t)k5 << 16 | (uint64_t)k6 << 8 | k7;
-                if (g_pt3 == (uint32_t)-1 || encrypt_lattice(3, g_pt3, key, g_tw3) == g_ct3) {
+                if (g_pt3 == (uint32_t)-1 || encrypt_sodark(3, g_pt3, key, g_tw3) == g_ct3) {
                   fprintf(g_outfp, "%014" PRIx64 "\n", key);
                   g_keysfound += 1;
                 }
@@ -449,9 +451,9 @@ void *crack4(void *param) {
           if (k11 == k12 && k61 == k62 && k71 == k72) {
             const uint64_t key = ((uint64_t)k123 << 32) | ((uint64_t)k4) << 24
                 | ((uint64_t)(next->k5)) << 16 | ((uint64_t)k61) << 8 | k71;
-            if (encrypt_lattice(4, g_pt1, key, g_tw1) == g_ct1
-                && encrypt_lattice(4, g_pt2, key, g_tw2) == g_ct2
-                && (g_pt3 == (uint32_t)-1 || encrypt_lattice(4, g_pt3, key, g_tw3) == g_ct3)) {
+            if (encrypt_sodark(4, g_pt1, key, g_tw1) == g_ct1
+                && encrypt_sodark(4, g_pt2, key, g_tw2) == g_ct2
+                && (g_pt3 == (uint32_t)-1 || encrypt_sodark(4, g_pt3, key, g_tw3) == g_ct3)) {
               pthread_mutex_lock(&g_write_lock);
               fprintf(g_outfp, "%014" PRIx64 "\n", key);
               g_keysfound += 1;
@@ -551,9 +553,9 @@ void *crack5(void *param) {
             continue;
           }
           const uint64_t key = pkey | k7 | ((uint64_t)next->k2 << 40);
-          if (encrypt_lattice(5, g_pt1, key, g_tw1) == g_ct1
-              && encrypt_lattice(5, g_pt2, key, g_tw2) == g_ct2
-              && (g_pt3 == (uint32_t)-1 || encrypt_lattice(5, g_pt3, key, g_tw3) == g_ct3)) {
+          if (encrypt_sodark(5, g_pt1, key, g_tw1) == g_ct1
+              && encrypt_sodark(5, g_pt2, key, g_tw2) == g_ct2
+              && (g_pt3 == (uint32_t)-1 || encrypt_sodark(5, g_pt3, key, g_tw3) == g_ct3)) {
             pthread_mutex_lock(&g_write_lock);
             fprintf(g_outfp, "%014" PRIx64 "\n", key);
             g_keysfound += 1;
@@ -581,15 +583,15 @@ int main(int argc, char **argv) {
   assert(enc_one_round(0x54e0cd, 0xc2284a ^ 0x543bd8) == 0xd0721d);
   assert(dec_one_round(0xd0721d, 0xc2284a ^ 0x543bd8) == 0x54e0cd);
   assert(dec_one_round(dec_one_round(0xd0721d, 0xc2284a ^ 0x543bd8), 0) == 0x2ac222);
-  assert(encrypt_lattice(3, 0x54e0cd, 0xc2284a1ce7be2f, 0x543bd88000017550) == 0x41db0c);
-  assert(encrypt_lattice(4, 0x54e0cd, 0xc2284a1ce7be2f, 0x543bd88000017550) == 0x987c6d);
+  assert(encrypt_sodark(3, 0x54e0cd, 0xc2284a1ce7be2f, 0x543bd88000017550) == 0x41db0c);
+  assert(encrypt_sodark(4, 0x54e0cd, 0xc2284a1ce7be2f, 0x543bd88000017550) == 0x987c6d);
 
   const char* usagestr = "Usage:\n"
-      "latticecracker rounds outfile plaintext1 ciphertext1 tweak1 plaintext2 ciphertext2 "
+      "%s rounds outfile plaintext1 ciphertext1 tweak1 plaintext2 ciphertext2 "
       "tweak2 [plaintext3 ciphertext3 tweak3]\n\n";
 
   if (argc != 9 && argc != 12) {
-    printf("%s", usagestr);
+    printf(usagestr, argv[0]);
     return 1;
   }
 

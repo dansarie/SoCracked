@@ -1,8 +1,8 @@
-# latticecracker
-Key cracker for the Lattice algorithm
+# SoCracked
+Key cracker for the SoDark algorithm
 
 ## Build
 
 ```console
-$ gcc -Ofast -march=native latticecracker.c -o latticecracker -lpthread
+$ gcc -Ofast -march=native socracked.c -o socracked -lpthread
 ```
