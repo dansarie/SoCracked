@@ -36,7 +36,6 @@ f32186 b741bd 543bd88040017550
 f3232f 3d5216 543bd88040017550
 f32928 f1a786 543bd88040017550
 f32f5f ceb446 543bd88000017550
-
 ```
 
 The `sodark` utility can be used to perform encryption and decryption with any
