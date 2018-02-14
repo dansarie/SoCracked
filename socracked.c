@@ -24,6 +24,7 @@
 #include <inttypes.h>
 #include <limits.h>
 #include <pthread.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -53,6 +54,13 @@ typedef struct {
   int num_pairs;
 } pairs_t;
 
+typedef struct {
+  tuple_t *tuples;
+  pairs_t pairs;
+  uint32_t num_tuples;
+  uint32_t nrounds;
+} worker_param_t;
+
 pthread_mutex_t g_next_lock;
 pthread_mutex_t g_write_lock;
 pthread_mutex_t g_threadcount_lock;
@@ -60,21 +68,6 @@ uint64_t g_keysfound = 0;           /* Number of keys found so far. */
 uint32_t g_threadcount = 0;         /* Number of working threads. */
 uint32_t g_next = 0;                /* Next work unit. */
 FILE *g_outfp = NULL;               /* Pointer to output file. */
-pairs_t g_pairs = {NULL, 0, 0, 0};
-tuple_t *g_tuples = NULL;           /* Array of tuples. Used in six- and seven-round attacks. */
-int g_num_tuples = 0;               /* Number of tuples in the above array. */
-int g_nrounds = 0;                  /* Number of rounds to attack. Used by crack67. */
-
-/* Known plaintexts, ciphertexts and tweaks. If only two are used g_pt3 = g_tw3 = g_ct3 = -1. */
-uint32_t g_pt1 = (uint32_t)-1;
-uint32_t g_pt2 = (uint32_t)-1;
-uint32_t g_pt3 = (uint32_t)-1;
-uint64_t g_tw1 = (uint64_t)-1;
-uint64_t g_tw2 = (uint64_t)-1;
-uint64_t g_tw3 = (uint64_t)-1;
-uint32_t g_ct1 = (uint32_t)-1;
-uint32_t g_ct2 = (uint32_t)-1;
-uint32_t g_ct3 = (uint32_t)-1;
 
 /* Returns the next work unit, i.e. the next value of two key bytes.
    A return value of >= 0x10000 indicates that there are no more work
@@ -92,31 +85,55 @@ uint32_t get_next() {
   return ret;
 }
 
-void crack2() {
-  const uint8_t tw11 = (g_tw1 >> 56) & 0xff;
-  const uint8_t tw12 = (g_tw1 >> 48) & 0xff;
-  const uint8_t tw13 = (g_tw1 >> 40) & 0xff;
-  const uint8_t tw14 = (g_tw1 >> 32) & 0xff;
-  const uint8_t tw15 = (g_tw1 >> 24) & 0xff;
-  const uint8_t tw16 = (g_tw1 >> 16) & 0xff;
-  const uint8_t tw21 = (g_tw2 >> 56) & 0xff;
-  const uint8_t tw22 = (g_tw2 >> 48) & 0xff;
-  const uint8_t tw23 = (g_tw2 >> 40) & 0xff;
-  const uint8_t tw24 = (g_tw2 >> 32) & 0xff;
-  const uint8_t tw25 = (g_tw2 >> 24) & 0xff;
-  const uint8_t tw26 = (g_tw2 >> 16) & 0xff;
-  const uint8_t b1 = ((g_pt1 >> 8) & 0xff) ^ tw13;
-  const uint8_t a1 = (((g_pt1 >> 16) ^ (g_pt1 >> 8)) & 0xff) ^ tw11;
-  const uint8_t c1 = ((g_pt1 ^ (g_pt1 >> 8)) & 0xff) ^ tw12;
-  const uint8_t b2 = ((g_pt2 >> 8) & 0xff) ^ tw23;
-  const uint8_t a2 = (((g_pt2 >> 16) ^ (g_pt2 >> 8)) & 0xff) ^ tw21;
-  const uint8_t c2 = ((g_pt2 ^ (g_pt2 >> 8)) & 0xff) ^ tw22;
-  const uint8_t app1 = (g_ct1 >> 16) & 0xff;
-  const uint8_t app2 = (g_ct2 >> 16) & 0xff;
-  const uint8_t cpp1 = g_ct1 & 0xff;
-  const uint8_t cpp2 = g_ct2 & 0xff;
-  const uint8_t bpp1 = g_sbox_dec[(g_ct1 >> 8) & 0xff] ^ app1 ^ cpp1 ^ tw16;
-  const uint8_t bpp2 = g_sbox_dec[(g_ct2 >> 8) & 0xff] ^ app2 ^ cpp2 ^ tw26;
+static inline bool test_key(uint32_t rounds, uint64_t key, tuple_t *tuples, uint32_t num_tuples) {
+  for (uint32_t i = 0; i < num_tuples; i++) {
+    if (encrypt_sodark_3(rounds, tuples[i].pt, key, tuples[i].tw) != tuples[i].ct) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static void found_key(uint64_t key) {
+  pthread_mutex_lock(&g_write_lock);
+  fprintf(g_outfp, "%014" PRIx64 "\n", key);
+  g_keysfound += 1;
+  pthread_mutex_unlock(&g_write_lock);
+}
+
+static uint64_t get_keys_found() {
+  pthread_mutex_lock(&g_write_lock);
+  uint64_t keysfound = g_keysfound;
+  pthread_mutex_unlock(&g_write_lock);
+  return keysfound;
+}
+
+void crack2(tuple_t *tuples, uint32_t num_tuples) {
+  assert(num_tuples > 1);
+  const uint8_t tw11 = (tuples[0].tw >> 56) & 0xff;
+  const uint8_t tw12 = (tuples[0].tw >> 48) & 0xff;
+  const uint8_t tw13 = (tuples[0].tw >> 40) & 0xff;
+  const uint8_t tw14 = (tuples[0].tw >> 32) & 0xff;
+  const uint8_t tw15 = (tuples[0].tw >> 24) & 0xff;
+  const uint8_t tw16 = (tuples[0].tw >> 16) & 0xff;
+  const uint8_t tw21 = (tuples[1].tw >> 56) & 0xff;
+  const uint8_t tw22 = (tuples[1].tw >> 48) & 0xff;
+  const uint8_t tw23 = (tuples[1].tw >> 40) & 0xff;
+  const uint8_t tw24 = (tuples[1].tw >> 32) & 0xff;
+  const uint8_t tw25 = (tuples[1].tw >> 24) & 0xff;
+  const uint8_t tw26 = (tuples[1].tw >> 16) & 0xff;
+  const uint8_t b1 = ((tuples[0].pt >> 8) & 0xff) ^ tw13;
+  const uint8_t a1 = (((tuples[0].pt >> 16) ^ (tuples[0].pt >> 8)) & 0xff) ^ tw11;
+  const uint8_t c1 = ((tuples[0].pt ^ (tuples[0].pt >> 8)) & 0xff) ^ tw12;
+  const uint8_t b2 = ((tuples[1].pt >> 8) & 0xff) ^ tw23;
+  const uint8_t a2 = (((tuples[1].pt >> 16) ^ (tuples[1].pt >> 8)) & 0xff) ^ tw21;
+  const uint8_t c2 = ((tuples[1].pt ^ (tuples[1].pt >> 8)) & 0xff) ^ tw22;
+  const uint8_t app1 = (tuples[0].ct >> 16) & 0xff;
+  const uint8_t app2 = (tuples[1].ct >> 16) & 0xff;
+  const uint8_t cpp1 = tuples[0].ct & 0xff;
+  const uint8_t cpp2 = tuples[1].ct & 0xff;
+  const uint8_t bpp1 = g_sbox_dec[(tuples[0].ct >> 8) & 0xff] ^ app1 ^ cpp1 ^ tw16;
+  const uint8_t bpp2 = g_sbox_dec[(tuples[1].ct >> 8) & 0xff] ^ app2 ^ cpp2 ^ tw26;
   const uint8_t sapp1 = g_sbox_dec[app1] ^ tw14;
   const uint8_t sapp2 = g_sbox_dec[app2] ^ tw24;
   const uint8_t scpp1 = g_sbox_dec[cpp1] ^ tw15;
@@ -152,52 +169,55 @@ void crack2() {
         if (k41 == k42 && k51 == k52) {
           uint64_t key = (uint64_t)k1[i] << 48 | (uint64_t)k2[k] << 40 | (uint64_t)k3 << 32
               | (uint64_t)k41 << 24 | (uint64_t)k51 << 16 | (uint64_t)k6 << 8;
-          if (g_pt3 == (uint32_t)-1 || encrypt_sodark_3(2, g_pt3, key, g_tw3) == g_ct3) {
-            fprintf(g_outfp, "%014" PRIx64 "\n", key);
-            g_keysfound += 1;
+          if (test_key(2, key, tuples, num_tuples)) {
+            found_key(key);
           }
         }
       }
     }
   }
-  if (g_keysfound == 0) {
+  uint64_t keysfound = get_keys_found();
+  if (keysfound == 0) {
     printf("No keys found.\n");
-  } else if (g_keysfound == 1) {
+  } else if (keysfound == 1) {
     printf("1 key found.\n");
   } else {
-    printf("%" PRIu64 " keys found.\n", g_keysfound);
+    printf("%" PRIu64 " keys found.\n", keysfound);
   }
 }
 
-void crack3() {
-  const uint8_t tw11 = (g_tw1 >> 56) & 0xff;
-  const uint8_t tw12 = (g_tw1 >> 48) & 0xff;
-  const uint8_t tw13 = (g_tw1 >> 40) & 0xff;
-  const uint8_t tw14 = (g_tw1 >> 32) & 0xff;
-  const uint8_t tw15 = (g_tw1 >> 24) & 0xff;
-  const uint8_t tw16 = (g_tw1 >> 16) & 0xff;
-  const uint8_t tw17 = (g_tw1 >> 8) & 0xff;
-  const uint8_t tw18 = g_tw1 & 0xff;
-  const uint8_t tw21 = (g_tw2 >> 56) & 0xff;
-  const uint8_t tw22 = (g_tw2 >> 48) & 0xff;
-  const uint8_t tw23 = (g_tw2 >> 40) & 0xff;
-  const uint8_t tw24 = (g_tw2 >> 32) & 0xff;
-  const uint8_t tw25 = (g_tw2 >> 24) & 0xff;
-  const uint8_t tw26 = (g_tw2 >> 16) & 0xff;
-  const uint8_t tw27 = (g_tw2 >> 8) & 0xff;
-  const uint8_t tw28 = g_tw2 & 0xff;
-  const uint8_t b1 = ((g_pt1 >> 8) & 0xff) ^ tw13;
-  const uint8_t a1 = (((g_pt1 >> 16) ^ (g_pt1 >> 8)) & 0xff) ^ tw11;
-  const uint8_t c1 = ((g_pt1 ^ (g_pt1 >> 8)) & 0xff) ^ tw12;
-  const uint8_t b2 = ((g_pt2 >> 8) & 0xff) ^ tw23;
-  const uint8_t a2 = (((g_pt2 >> 16) ^ (g_pt2 >> 8)) & 0xff) ^ tw21;
-  const uint8_t c2 = ((g_pt2 ^ (g_pt2 >> 8)) & 0xff) ^ tw22;
-  const uint8_t bppp1 = ((g_sbox_dec[(g_ct1 >> 8) & 0xff] ^ g_ct1 ^ (g_ct1 >> 16)) & 0xff) ^ tw11;
-  const uint8_t appp1 = g_sbox_dec[(g_ct1 >> 16) & 0xff] ^ tw17;
-  const uint8_t cppp1 = g_sbox_dec[g_ct1 & 0xff] ^ tw18;
-  const uint8_t bppp2 = ((g_sbox_dec[(g_ct2 >> 8) & 0xff] ^ g_ct2 ^ (g_ct2 >> 16)) & 0xff) ^ tw21;
-  const uint8_t appp2 = g_sbox_dec[(g_ct2 >> 16) & 0xff] ^ tw27;
-  const uint8_t cppp2 = g_sbox_dec[g_ct2 & 0xff] ^ tw28;
+void crack3(tuple_t *tuples, uint32_t num_tuples) {
+  assert(num_tuples > 1);
+  const uint8_t tw11 = (tuples[0].tw >> 56) & 0xff;
+  const uint8_t tw12 = (tuples[0].tw >> 48) & 0xff;
+  const uint8_t tw13 = (tuples[0].tw >> 40) & 0xff;
+  const uint8_t tw14 = (tuples[0].tw >> 32) & 0xff;
+  const uint8_t tw15 = (tuples[0].tw >> 24) & 0xff;
+  const uint8_t tw16 = (tuples[0].tw >> 16) & 0xff;
+  const uint8_t tw17 = (tuples[0].tw >> 8) & 0xff;
+  const uint8_t tw18 = tuples[0].tw & 0xff;
+  const uint8_t tw21 = (tuples[1].tw >> 56) & 0xff;
+  const uint8_t tw22 = (tuples[1].tw >> 48) & 0xff;
+  const uint8_t tw23 = (tuples[1].tw >> 40) & 0xff;
+  const uint8_t tw24 = (tuples[1].tw >> 32) & 0xff;
+  const uint8_t tw25 = (tuples[1].tw >> 24) & 0xff;
+  const uint8_t tw26 = (tuples[1].tw >> 16) & 0xff;
+  const uint8_t tw27 = (tuples[1].tw >> 8) & 0xff;
+  const uint8_t tw28 = tuples[1].tw & 0xff;
+  const uint8_t b1 = ((tuples[0].pt >> 8) & 0xff) ^ tw13;
+  const uint8_t a1 = (((tuples[0].pt >> 16) ^ (tuples[0].pt >> 8)) & 0xff) ^ tw11;
+  const uint8_t c1 = ((tuples[0].pt ^ (tuples[0].pt >> 8)) & 0xff) ^ tw12;
+  const uint8_t b2 = ((tuples[1].pt >> 8) & 0xff) ^ tw23;
+  const uint8_t a2 = (((tuples[1].pt >> 16) ^ (tuples[1].pt >> 8)) & 0xff) ^ tw21;
+  const uint8_t c2 = ((tuples[1].pt ^ (tuples[1].pt >> 8)) & 0xff) ^ tw22;
+  const uint8_t bppp1 = ((g_sbox_dec[(tuples[0].ct >> 8) & 0xff] ^ tuples[0].ct
+      ^ (tuples[0].ct >> 16)) & 0xff) ^ tw11;
+  const uint8_t appp1 = g_sbox_dec[(tuples[0].ct >> 16) & 0xff] ^ tw17;
+  const uint8_t cppp1 = g_sbox_dec[tuples[0].ct & 0xff] ^ tw18;
+  const uint8_t bppp2 = ((g_sbox_dec[(tuples[1].ct >> 8) & 0xff] ^ tuples[1].ct
+      ^ (tuples[1].ct >> 16)) & 0xff) ^ tw21;
+  const uint8_t appp2 = g_sbox_dec[(tuples[1].ct >> 16) & 0xff] ^ tw27;
+  const uint8_t cppp2 = g_sbox_dec[tuples[1].ct & 0xff] ^ tw28;
   const uint8_t dbpp = bppp1 ^ bppp2;
   const uint8_t dapp = appp1 ^ appp2 ^ dbpp;
   const uint8_t dcpp = cppp1 ^ cppp2 ^ dbpp;
@@ -241,9 +261,8 @@ void crack3() {
               if (k41 == k42) {
                 uint64_t key = (uint64_t)k1 << 48 | (uint64_t)k2 << 40 | (uint64_t)k3 << 32
                     | (uint64_t)k41 << 24 | (uint64_t)k5 << 16 | (uint64_t)k6 << 8 | k7;
-                if (g_pt3 == (uint32_t)-1 || encrypt_sodark_3(3, g_pt3, key, g_tw3) == g_ct3) {
-                  fprintf(g_outfp, "%014" PRIx64 "\n", key);
-                  g_keysfound += 1;
+                if (test_key(3, key, tuples, num_tuples)) {
+                  found_key(key);
                 }
               }
             }
@@ -252,38 +271,44 @@ void crack3() {
       }
     }
   }
-  if (g_keysfound == 0) {
+  uint64_t keysfound = get_keys_found();
+  if (keysfound == 0) {
     printf("No keys found.\n");
-  } else if (g_keysfound == 1) {
+  } else if (keysfound == 1) {
     printf("1 key found.\n");
   } else {
-    printf("%" PRIu64 " keys found.\n", g_keysfound);
+    printf("%" PRIu64 " keys found.\n", keysfound);
   }
 }
 
-void *crack4(void *param) {
-  (void)(param); /* Silence unused warning. */
+void *crack4(void *p) {
+  worker_param_t params = *((worker_param_t*)p);
+  tuple_t *tuples = params.tuples;
+  uint32_t num_tuples = params.num_tuples;
+  assert(num_tuples > 1);
+  assert(params.nrounds == 4);
+
   pthread_mutex_lock(&g_threadcount_lock);
   uint32_t threadid = g_threadcount++;
   pthread_mutex_unlock(&g_threadcount_lock);
 
   /* Precalculate tweaks. */
-  const uint32_t r1tw1 = g_tw1 >> 40;
-  const uint32_t r1tw2 = g_tw2 >> 40;
-  const uint32_t r4tw1 = (g_tw1 >> 32) & 0xffffff;
-  const uint32_t r4tw2 = (g_tw2 >> 32) & 0xffffff;
-  const uint8_t tw11 = (g_tw1 >> 56) & 0xff;
-  const uint8_t tw14 = (g_tw1 >> 32) & 0xff;
-  const uint8_t tw15 = (g_tw1 >> 24) & 0xff;
-  const uint8_t tw16 = (g_tw1 >> 16) & 0xff;
-  const uint8_t tw17 = (g_tw1 >> 8) & 0xff;
-  const uint8_t tw18 = g_tw1 & 0xff;
-  const uint8_t tw21 = (g_tw2 >> 56) & 0xff;
-  const uint8_t tw24 = (g_tw2 >> 32) & 0xff;
-  const uint8_t tw25 = (g_tw2 >> 24) & 0xff;
-  const uint8_t tw26 = (g_tw2 >> 16) & 0xff;
-  const uint8_t tw27 = (g_tw2 >> 8) & 0xff;
-  const uint8_t tw28 = g_tw2 & 0xff;
+  const uint32_t r1tw1 = tuples[0].tw >> 40;
+  const uint32_t r1tw2 = tuples[1].tw >> 40;
+  const uint32_t r4tw1 = (tuples[0].tw >> 32) & 0xffffff;
+  const uint32_t r4tw2 = (tuples[1].tw >> 32) & 0xffffff;
+  const uint8_t tw11 = (tuples[0].tw >> 56) & 0xff;
+  const uint8_t tw14 = (tuples[0].tw >> 32) & 0xff;
+  const uint8_t tw15 = (tuples[0].tw >> 24) & 0xff;
+  const uint8_t tw16 = (tuples[0].tw >> 16) & 0xff;
+  const uint8_t tw17 = (tuples[0].tw >> 8) & 0xff;
+  const uint8_t tw18 = tuples[0].tw & 0xff;
+  const uint8_t tw21 = (tuples[1].tw >> 56) & 0xff;
+  const uint8_t tw24 = (tuples[1].tw >> 32) & 0xff;
+  const uint8_t tw25 = (tuples[1].tw >> 24) & 0xff;
+  const uint8_t tw26 = (tuples[1].tw >> 16) & 0xff;
+  const uint8_t tw27 = (tuples[1].tw >> 8) & 0xff;
+  const uint8_t tw28 = tuples[1].tw & 0xff;
 
   struct delta {
     uint8_t k5;
@@ -322,8 +347,8 @@ void *crack4(void *param) {
       const uint8_t k4 = k45 >> 8;
       const uint8_t k5 = k45 & 0xff;
       const uint32_t k345 = ((uint32_t)k3 << 16) | k45;
-      const uint32_t r31 = dec_one_round_3(g_ct1, k345 ^ r4tw1);
-      const uint32_t r32 = dec_one_round_3(g_ct2, k345 ^ r4tw2);
+      const uint32_t r31 = dec_one_round_3(tuples[0].ct, k345 ^ r4tw1);
+      const uint32_t r32 = dec_one_round_3(tuples[1].ct, k345 ^ r4tw2);
       const uint8_t r31a = (r31 >> 16) & 0xff;
       const uint8_t r31b = (r31 >> 8) & 0xff;
       const uint8_t r31c = r31 & 0xff;
@@ -363,8 +388,8 @@ void *crack4(void *param) {
     }
     for (uint16_t k1 = 0; k1 < 256; k1++) {
       const uint32_t k123 = ((uint32_t)k1 << 16) | ((uint32_t)k2 << 8) | k3;
-      const uint32_t r11 = enc_one_round_3(g_pt1, k123 ^ r1tw1);
-      const uint32_t r12 = enc_one_round_3(g_pt2, k123 ^ r1tw2);
+      const uint32_t r11 = enc_one_round_3(tuples[0].pt, k123 ^ r1tw1);
+      const uint32_t r12 = enc_one_round_3(tuples[1].pt, k123 ^ r1tw2);
       const uint8_t r11a = r11 >> 16;
       const uint8_t r11b = (r11 >> 8) & 0xff;
       const uint8_t r12a = r12 >> 16;
@@ -387,13 +412,8 @@ void *crack4(void *param) {
           if (k11 == k12 && k61 == k62 && k71 == k72) {
             const uint64_t key = ((uint64_t)k123 << 32) | ((uint64_t)k4) << 24
                 | ((uint64_t)(next->k5)) << 16 | ((uint64_t)k61) << 8 | k71;
-            if (encrypt_sodark_3(4, g_pt1, key, g_tw1) == g_ct1
-                && encrypt_sodark_3(4, g_pt2, key, g_tw2) == g_ct2
-                && (g_pt3 == (uint32_t)-1 || encrypt_sodark_3(4, g_pt3, key, g_tw3) == g_ct3)) {
-              pthread_mutex_lock(&g_write_lock);
-              fprintf(g_outfp, "%014" PRIx64 "\n", key);
-              g_keysfound += 1;
-              pthread_mutex_unlock(&g_write_lock);
+            if (test_key(4, key, tuples, num_tuples)) {
+              found_key(key);
             }
           }
           next = next->next;
@@ -409,21 +429,26 @@ void *crack4(void *param) {
   return NULL;
 }
 
-void *crack5(void *param) {
-  (void)(param); /* Silence unused warning. */
+void *crack5(void *p) {
+  worker_param_t params = *((worker_param_t*)p);
+  tuple_t *tuples = params.tuples;
+  uint32_t num_tuples = params.num_tuples;
+  assert(num_tuples > 1);
+  assert(params.nrounds == 5);
+
   pthread_mutex_lock(&g_threadcount_lock);
   uint32_t threadid = g_threadcount++;
   pthread_mutex_unlock(&g_threadcount_lock);
 
   /* Precalculate tweaks. */
-  const uint32_t r1tw1 = g_tw1 >> 40;
-  const uint32_t r1tw2 = g_tw2 >> 40;
-  const uint32_t r2tw1 = (g_tw1 >> 16) & 0xffffff;
-  const uint32_t r2tw2 = (g_tw2 >> 16) & 0xffffff;
-  const uint32_t r4tw1 = (g_tw1 >> 32) & 0xffffff;
-  const uint32_t r4tw2 = (g_tw2 >> 32) & 0xffffff;
-  const uint32_t r5tw1 = (g_tw1 >> 8) & 0xffffff;
-  const uint32_t r5tw2 = (g_tw2 >> 8) & 0xffffff;
+  const uint32_t r1tw1 = tuples[0].tw >> 40;
+  const uint32_t r1tw2 = tuples[1].tw >> 40;
+  const uint32_t r2tw1 = (tuples[0].tw >> 16) & 0xffffff;
+  const uint32_t r2tw2 = (tuples[1].tw >> 16) & 0xffffff;
+  const uint32_t r4tw1 = (tuples[0].tw >> 32) & 0xffffff;
+  const uint32_t r4tw2 = (tuples[1].tw >> 32) & 0xffffff;
+  const uint32_t r5tw1 = (tuples[0].tw >> 8) & 0xffffff;
+  const uint32_t r5tw2 = (tuples[1].tw >> 8) & 0xffffff;
 
   struct delta {
     uint8_t k2;
@@ -439,14 +464,14 @@ void *crack5(void *param) {
   while ((k13 = get_next()) < 0x10000) {
     const uint8_t k1 = k13 >> 8;
     const uint8_t k3 = k13 & 0xff;
-    for (uint32_t k456 = 0x1ce7be; k456 < 0x1000000; k456++) {
+    for (uint32_t k456 = 0; k456 < 0x1000000; k456++) {
       const uint64_t pkey = ((uint64_t)k1 << 48) | ((uint64_t)k3 << 32) | ((uint64_t)k456 << 8);
       uint32_t k345 = ((uint32_t)k3 << 16) | (k456 >> 8);
       memset(lists, 0, 0x100 * sizeof(struct delta*));
       for (uint16_t k2 = 0; k2 < 0x100; k2++) {
         uint32_t k123 = ((uint32_t)k1 << 16) | (k2 << 8) | k3;
-        uint32_t v1 = enc_one_round_3(enc_one_round_3(g_pt1, k123 ^ r1tw1), k456 ^ r2tw1);
-        uint32_t v2 = enc_one_round_3(enc_one_round_3(g_pt2, k123 ^ r1tw2), k456 ^ r2tw2);
+        uint32_t v1 = enc_one_round_3(enc_one_round_3(tuples[0].pt, k123 ^ r1tw1), k456 ^ r2tw1);
+        uint32_t v2 = enc_one_round_3(enc_one_round_3(tuples[1].pt, k123 ^ r1tw2), k456 ^ r2tw2);
         uint32_t delta = v1 ^ v2;
         uint8_t addr = delta & 0xff;
         if (lists[addr] == NULL) {
@@ -465,8 +490,8 @@ void *crack5(void *param) {
       }
       for (uint16_t k7 = 0; k7 < 0x100; k7++) {
         uint32_t k671 = ((k456 & 0xff) << 16) | (k7 << 8) | k1;
-        uint32_t v1 = dec_one_round_3(dec_one_round_3(g_ct1, k671 ^ r5tw1), k345 ^ r4tw1);
-        uint32_t v2 = dec_one_round_3(dec_one_round_3(g_ct2, k671 ^ r5tw2), k345 ^ r4tw2);
+        uint32_t v1 = dec_one_round_3(dec_one_round_3(tuples[0].ct, k671 ^ r5tw1), k345 ^ r4tw1);
+        uint32_t v2 = dec_one_round_3(dec_one_round_3(tuples[1].ct, k671 ^ r5tw2), k345 ^ r4tw2);
         uint32_t db = g_sbox_dec[(v1 >> 8) & 0xff];
         db ^= g_sbox_dec[(v2 >> 8) & 0xff];
         db ^= v1;
@@ -489,13 +514,8 @@ void *crack5(void *param) {
             continue;
           }
           const uint64_t key = pkey | k7 | ((uint64_t)next->k2 << 40);
-          if (encrypt_sodark_3(5, g_pt1, key, g_tw1) == g_ct1
-              && encrypt_sodark_3(5, g_pt2, key, g_tw2) == g_ct2
-              && (g_pt3 == (uint32_t)-1 || encrypt_sodark_3(5, g_pt3, key, g_tw3) == g_ct3)) {
-            pthread_mutex_lock(&g_write_lock);
-            fprintf(g_outfp, "%014" PRIx64 "\n", key);
-            g_keysfound += 1;
-            pthread_mutex_unlock(&g_write_lock);
+          if (test_key(5, key, tuples, num_tuples)) {
+            found_key(key);
           }
           next = next->next;
         }
@@ -510,37 +530,41 @@ void *crack5(void *param) {
   return NULL;
 }
 
-void *crack67(void *param) {
-  (void)(param); /* Silence unused warning. */
+void *crack67(void *p) {
+  worker_param_t params = *((worker_param_t*)p);
+  assert(params.num_tuples > 1);
+  assert(params.nrounds == 6 || params.nrounds == 7);
+  assert(params.pairs.num_pairs > 0);
+
   pthread_mutex_lock(&g_threadcount_lock);
   uint32_t threadid = g_threadcount++;
   pthread_mutex_unlock(&g_threadcount_lock);
 
   /* Plaintexts. */
-  const uint32_t a01 = (g_pt1 >> 16) & 0xff;
-  const uint32_t a02 = (g_pt2 >> 16) & 0xff;
-  const uint32_t b01 = (g_pt1 >>  8) & 0xff;
-  const uint32_t b02 = (g_pt2 >>  8) & 0xff;
-  const uint32_t c01 =  g_pt1        & 0xff;
-  const uint32_t c02 =  g_pt2        & 0xff;
+  const uint32_t a01 = (params.pairs.pairs[0].t1.pt >> 16) & 0xff;
+  const uint32_t a02 = (params.pairs.pairs[0].t2.pt >> 16) & 0xff;
+  const uint32_t b01 = (params.pairs.pairs[0].t1.pt >>  8) & 0xff;
+  const uint32_t b02 = (params.pairs.pairs[0].t2.pt >>  8) & 0xff;
+  const uint32_t c01 =  params.pairs.pairs[0].t1.pt        & 0xff;
+  const uint32_t c02 =  params.pairs.pairs[0].t2.pt        & 0xff;
 
   /* Tweaks. */
-  const uint32_t t11 = (g_tw1 >> 56) & 0xff;
-  const uint32_t t12 = (g_tw2 >> 56) & 0xff;
-  const uint32_t t21 = (g_tw1 >> 48) & 0xff;
-  const uint32_t t22 = (g_tw2 >> 48) & 0xff;
-  const uint32_t t31 = (g_tw1 >> 40) & 0xff;
-  const uint32_t t32 = (g_tw2 >> 40) & 0xff;
-  const uint32_t t41 = (g_tw1 >> 32) & 0xff;
-  const uint32_t t42 = (g_tw2 >> 32) & 0xff;
-  const uint32_t t51 = (g_tw1 >> 24) & 0xff;
-  const uint32_t t52 = (g_tw2 >> 24) & 0xff;
-  const uint32_t t61 = (g_tw1 >> 16) & 0xff;
-  const uint32_t t62 = (g_tw2 >> 16) & 0xff;
-  const uint32_t t71 = (g_tw1 >>  8) & 0xff;
-  const uint32_t t72 = (g_tw2 >>  8) & 0xff;
-  const uint32_t t81 =  g_tw1        & 0xff;
-  const uint32_t t82 =  g_tw2        & 0xff;
+  const uint32_t t11 = (params.pairs.pairs[0].t1.tw >> 56) & 0xff;
+  const uint32_t t12 = (params.pairs.pairs[0].t2.tw >> 56) & 0xff;
+  const uint32_t t21 = (params.pairs.pairs[0].t1.tw >> 48) & 0xff;
+  const uint32_t t22 = (params.pairs.pairs[0].t2.tw >> 48) & 0xff;
+  const uint32_t t31 = (params.pairs.pairs[0].t1.tw >> 40) & 0xff;
+  const uint32_t t32 = (params.pairs.pairs[0].t2.tw >> 40) & 0xff;
+  const uint32_t t41 = (params.pairs.pairs[0].t1.tw >> 32) & 0xff;
+  const uint32_t t42 = (params.pairs.pairs[0].t2.tw >> 32) & 0xff;
+  const uint32_t t51 = (params.pairs.pairs[0].t1.tw >> 24) & 0xff;
+  const uint32_t t52 = (params.pairs.pairs[0].t2.tw >> 24) & 0xff;
+  const uint32_t t61 = (params.pairs.pairs[0].t1.tw >> 16) & 0xff;
+  const uint32_t t62 = (params.pairs.pairs[0].t2.tw >> 16) & 0xff;
+  const uint32_t t71 = (params.pairs.pairs[0].t1.tw >>  8) & 0xff;
+  const uint32_t t72 = (params.pairs.pairs[0].t2.tw >>  8) & 0xff;
+  const uint32_t t81 =  params.pairs.pairs[0].t1.tw        & 0xff;
+  const uint32_t t82 =  params.pairs.pairs[0].t2.tw        & 0xff;
 
   uint32_t k12;
   while ((k12 = get_next()) < 0x10000) {
@@ -569,14 +593,8 @@ void *crack67(void *param) {
                   | ((uint64_t)k4 << 24) | ((uint64_t)k5 << 16) | ((uint64_t)k6 << 8);
               for (int k7 = 0; k7 < 0x100; k7++) {
                 uint64_t fullkey = pkey | k7;
-                if (encrypt_sodark_3(g_nrounds, g_pt1, fullkey, g_tw1) == g_ct1
-                    && encrypt_sodark_3(g_nrounds, g_pt2, fullkey, g_tw2) == g_ct2
-                    && (g_pt3 == (uint32_t)-1
-                        || encrypt_sodark_3(g_nrounds, g_pt3, fullkey, g_tw3) == g_ct3)) {
-                  pthread_mutex_lock(&g_write_lock);
-                  fprintf(g_outfp, "%014" PRIx64 "\n", fullkey);
-                  g_keysfound += 1;
-                  pthread_mutex_unlock(&g_write_lock);
+                if (test_key(params.nrounds, fullkey, params.tuples, params.num_tuples)) {
+                  found_key(fullkey);
                 }
               }
             }
@@ -642,140 +660,113 @@ int main(int argc, char **argv) {
   assert(encrypt_sodark_3(3, 0x54e0cd, 0xc2284a1ce7be2f, 0x543bd88000017550) == 0x41db0c);
   assert(encrypt_sodark_3(4, 0x54e0cd, 0xc2284a1ce7be2f, 0x543bd88000017550) == 0x987c6d);
 
-  const char* usagestr = "Usage:\n\n"
-      "2-5 rounds:\n"
-      "%s rounds outfile plaintext1 ciphertext1 tweak1 plaintext2 ciphertext2 "
-      "tweak2 [plaintext3 ciphertext3 tweak3]\n\n"
-      "6-7 rounds:\n"
-      "%s rounds outfile infile\n\n";
-
-  if (argc != 4 && argc != 9 && argc != 12) {
-    printf(usagestr, argv[0], argv[0]);
+  if (argc != 4) {
+    printf("Usage: %s rounds infile outfile\n\n", argv[0]);
     return 1;
   }
 
-  uint32_t nrounds = atoi(argv[1]);
-  if (nrounds < 2 || nrounds > 8) {
+  worker_param_t worker_params;
+  memset(&worker_params, 0, sizeof(worker_param_t));
+  worker_params.nrounds = atoi(argv[1]);
+  if (worker_params.nrounds < 2 || worker_params.nrounds > 8) {
     fprintf(stderr, "Bad number of rounds. Only 2 - 8 rounds are supported.\n");
     return 1;
   }
 
-  g_outfp = fopen(argv[2], "w");
-  if (g_outfp == NULL) {
-    fprintf(stderr, "Could not open output file for writing.\n");
+  FILE *infp = fopen(argv[2], "r");
+  if (infp == NULL) {
+    fprintf(stderr, "Could not open input file for reading.\n");
     return 1;
   }
 
-  if (nrounds <= 5) {
-    if (argc != 9 && argc != 12) {
-      printf(usagestr, argv[0], argv[0]);
-      fclose(g_outfp);
-      return 1;
-    }
-    g_pt1 = strtoul(argv[3], NULL, 16);
-    g_ct1 = strtoul(argv[4], NULL, 16);
-    g_tw1 = strtoull(argv[5], NULL, 16);
-    g_pt2 = strtoul(argv[6], NULL, 16);
-    g_ct2 = strtoul(argv[7], NULL, 16);
-    g_tw2 = strtoull(argv[8], NULL, 16);
+  g_outfp = fopen(argv[3], "w");
+  if (g_outfp == NULL) {
+    fprintf(stderr, "Could not open output file for writing.\n");
+    fclose(infp);
+    return 1;
+  }
 
-    printf("PT1: %06" PRIx32 " CT1: %06" PRIx32 " TW1: %016" PRIx64 "\n", g_pt1, g_ct1, g_tw1);
-    printf("PT2: %06" PRIx32 " CT2: %06" PRIx32 " TW2: %016" PRIx64 "\n", g_pt2, g_ct2, g_tw2);
-    if (argc == 12) {
-      g_pt3 = strtoul(argv[9], NULL, 16);
-      g_ct3 = strtoul(argv[10], NULL, 16);
-      g_tw3 = strtoull(argv[11], NULL, 16);
-      printf("PT3: %06" PRIx32 " CT3: %06" PRIx32 " TW3: %016" PRIx64 "\n", g_pt3, g_ct3, g_tw3);
-    }
-  } else if (nrounds >= 6 && nrounds <= 7) {
-    if (argc != 4 && argc != 12) {
-      printf(usagestr, argv[0], argv[0]);
-      fclose(g_outfp);
-      return 1;
-    }
-    FILE *infp = fopen(argv[3], "r");
-    if (infp == NULL) {
-      fprintf(stderr, "Could not open input file for reading.\n");
-      fclose(g_outfp);
-      return 1;
-    }
-    printf("Reading input file... ");
-    fflush(stdout);
+  printf("Reading input file... ");
+  fflush(stdout);
 
-    const int allocstep = 1000;
-    int allocsize = allocstep;
-    g_tuples = malloc(sizeof(tuple_t) * allocstep);
-    if (g_tuples == NULL) {
-      fprintf(stderr, "Memory allocation error on line %d.\n", __LINE__);
-      fclose(g_outfp);
-      fclose(infp);
-      return 1;
-    }
+  const int allocstep = 1000;
+  int allocsize = allocstep;
+  worker_params.num_tuples = 0;
+  worker_params.tuples = malloc(sizeof(tuple_t) * allocstep);
+  if (worker_params.tuples == NULL) {
+    fprintf(stderr, "Memory allocation error on line %d.\n", __LINE__);
+    fclose(g_outfp);
+    fclose(infp);
+    return 1;
+  }
 
-    while (!feof(infp)) {
-      if (fscanf(infp, "%06x %06x %016" PRIx64 "\n", &g_tuples[g_num_tuples].pt,
-          &g_tuples[g_num_tuples].ct, &g_tuples[g_num_tuples].tw) == 3) {
-        g_num_tuples += 1;
-        if (g_num_tuples == allocsize) {
-          allocsize += allocstep;
-          g_tuples = realloc(g_tuples, sizeof(tuple_t) * allocsize);
-          if (g_tuples == NULL) {
-            fprintf(stderr, "Memory allocation error.\n");
-            fclose(g_outfp);
-            fclose(infp);
-            return 1;
-          }
-        }
-      } else {
-        int c;
-        while ((c = fgetc(infp)) != '\n' && c != EOF) {
-          /* Empty. */
+  while (!feof(infp)) {
+    if (fscanf(infp, "%06x %06x %016" PRIx64 "\n",
+        &worker_params.tuples[worker_params.num_tuples].pt,
+        &worker_params.tuples[worker_params.num_tuples].ct,
+        &worker_params.tuples[worker_params.num_tuples].tw) == 3) {
+      worker_params.num_tuples += 1;
+      if (worker_params.num_tuples == allocsize) {
+        allocsize += allocstep;
+        worker_params.tuples = realloc(worker_params.tuples, sizeof(tuple_t) * allocsize);
+        if (worker_params.tuples == NULL) {
+          fprintf(stderr, "Memory allocation error.\n");
+          fclose(g_outfp);
+          fclose(infp);
+          return 1;
         }
       }
+    } else {
+      int c;
+      while ((c = fgetc(infp)) != '\n' && c != EOF) {
+        /* Empty. */
+      }
     }
-    fclose(infp);
-    infp = NULL;
-    printf("%d tuples loaded.\n", g_num_tuples);
+  }
+  fclose(infp);
+  infp = NULL;
+  printf("%d tuples loaded.\n", worker_params.num_tuples);
+  if (worker_params.nrounds == 6 || worker_params.nrounds == 7) {
     printf("Filtering pairs... ");
     fflush(stdout);
 
-    if (!init_pairs(&g_pairs)) {
-      free(g_tuples);
+    if (!init_pairs(&worker_params.pairs)) {
+      free(worker_params.tuples);
       fclose(g_outfp);
       return 1;
     }
 
-    for (int i = 0; i < g_num_tuples; i++) {
-      for (int k = i + 1; k < g_num_tuples; k++) {
-        uint64_t delta_tw = g_tuples[i].tw ^ g_tuples[k].tw;
+    for (int i = 0; i < worker_params.num_tuples; i++) {
+      for (int k = i + 1; k < worker_params.num_tuples; k++) {
+        uint64_t delta_tw = worker_params.tuples[i].tw ^ worker_params.tuples[k].tw;
         if (delta_tw & 0xffffffff00ffffffL
             || ((delta_tw >> 24) & 0xff) == 0) {
           continue;
         }
-        if (nrounds == 6) {
-          if (g_tuples[i].ct == g_tuples[k].ct) {
-            pair_t p = {g_tuples[i], g_tuples[k]};
-            if (!add_pair(&g_pairs, p)) {
-              free(g_tuples);
+        if (worker_params.nrounds == 6) {
+          if (worker_params.tuples[i].ct == worker_params.tuples[k].ct) {
+            pair_t p = {worker_params.tuples[i], worker_params.tuples[k]};
+            if (!add_pair(&worker_params.pairs, p)) {
+              free(worker_params.tuples);
               fclose(g_outfp);
               return 1;
             }
           }
-        } else if (nrounds == 7) {
-          if (((g_tuples[i].ct ^ g_tuples[k].ct) & 0xff00ff) == 0) {
-            uint8_t a1 =  g_tuples[i].ct >> 16;
-            uint8_t a2 =  g_tuples[k].ct >> 16;
-            uint8_t b1 = (g_tuples[i].ct >> 8) & 0xff;
-            uint8_t b2 = (g_tuples[k].ct >> 8) & 0xff;
-            uint8_t c1 =  g_tuples[i].ct & 0xff;
-            uint8_t c2 =  g_tuples[k].ct & 0xff;
-            uint8_t t1 = (g_tuples[i].tw >> 24) & 0xff;
-            uint8_t t2 = (g_tuples[k].tw >> 24) & 0xff;
+        } else if (worker_params.nrounds == 7) {
+          if (((worker_params.tuples[i].ct ^ worker_params.tuples[k].ct) & 0xff00ff) == 0) {
+            uint8_t a1 =  worker_params.tuples[i].ct >> 16;
+            uint8_t a2 =  worker_params.tuples[k].ct >> 16;
+            uint8_t b1 = (worker_params.tuples[i].ct >> 8) & 0xff;
+            uint8_t b2 = (worker_params.tuples[k].ct >> 8) & 0xff;
+            uint8_t c1 =  worker_params.tuples[i].ct & 0xff;
+            uint8_t c2 =  worker_params.tuples[k].ct & 0xff;
+            uint8_t t1 = (worker_params.tuples[i].tw >> 24) & 0xff;
+            uint8_t t2 = (worker_params.tuples[k].tw >> 24) & 0xff;
             uint8_t dbh = g_sbox_dec[b1] ^ a1 ^ c1 ^ t1 ^ g_sbox_dec[b2] ^ a2 ^ c2 ^ t2;
             if (dbh == 0) {
-              pair_t p = {g_tuples[i], g_tuples[k]};
-              if (!add_pair(&g_pairs, p)) {
-                free(g_tuples);
+              pair_t p = {worker_params.tuples[i], worker_params.tuples[k]};
+              if (!add_pair(&worker_params.pairs, p)) {
+                free(worker_params.tuples);
                 fclose(g_outfp);
                 return 1;
               }
@@ -786,45 +777,44 @@ int main(int argc, char **argv) {
         }
       }
     }
-    printf("%d potential pairs found.\n", g_pairs.num_pairs);
-    if (g_pairs.num_pairs == 0) {
-      free(g_tuples);
+    printf("%d potential pairs found.\n", worker_params.pairs.num_pairs);
+    if (worker_params.pairs.num_pairs == 0) {
+      free(worker_params.tuples);
+      free_pairs(&worker_params.pairs);
       fclose(g_outfp);
       return 0;
     }
     printf("Only one pair needed. Using first pair.\n");
-    g_pt1 = g_pairs.pairs[0].t1.pt;
-    g_pt2 = g_pairs.pairs[0].t2.pt;
-    g_ct1 = g_pairs.pairs[0].t1.ct;
-    g_ct2 = g_pairs.pairs[0].t2.ct;
-    g_tw1 = g_pairs.pairs[0].t1.tw;
-    g_tw2 = g_pairs.pairs[0].t2.tw;
+  } /* worker_params.nrounds == 6 || worker_params.nrounds == 7 */
 
-    for (int i = 0; i < g_num_tuples; i++) {
-      if (!((g_tuples[i].pt == g_pt1 && g_tuples[i].ct == g_ct1 && g_tuples[i].tw == g_tw1)
-          || (g_tuples[i].pt == g_pt2 && g_tuples[i].ct == g_ct2 && g_tuples[i].tw == g_tw2))) {
-        g_pt3 = g_tuples[i].pt;
-        g_ct3 = g_tuples[i].ct;
-        g_tw3 = g_tuples[i].tw;
-        break;
+  if (worker_params.nrounds < 6) {
+    /* Ensure first two pairs are unique. */
+    while (worker_params.num_tuples > 1
+        && worker_params.tuples[0].pt == worker_params.tuples[1].pt
+        && worker_params.tuples[0].ct == worker_params.tuples[1].ct
+        && worker_params.tuples[0].tw == worker_params.tuples[1].tw) {
+      for (int i = 2; i < worker_params.num_tuples; i++) {
+        worker_params.tuples[i - 1] = worker_params.tuples[i];
       }
+      worker_params.num_tuples -= 1;
     }
+  }
 
-    printf("Tuple 1: %06x %06x %016" PRIx64 "\n", g_pt1, g_ct1, g_tw1);
-    printf("Tuple 2: %06x %06x %016" PRIx64 "\n", g_pt2, g_ct2, g_tw2);
-    if (g_pt3 != (uint32_t)-1) {
-      printf("Tuple 3: %06x %06x %016" PRIx64 "\n", g_pt3, g_ct3, g_tw3);
-    }
-  } /* nrounds >= 6 && nrounds <= 7 */
+  if (worker_params.nrounds < 6 && worker_params.num_tuples < 2) {
+    fprintf(stderr, "Error: At least two valid tuples are required.\n");
+    free(worker_params.tuples);
+    fclose(g_outfp);
+    return 1;
+  }
 
   void *(*crack_func)(void*) = NULL;
-  switch (nrounds) {
+  switch (worker_params.nrounds) {
     case 2:
-      crack2();
+      crack2(worker_params.tuples, worker_params.num_tuples);
       fclose(g_outfp);
       return 0;
     case 3:
-      crack3();
+      crack3(worker_params.tuples, worker_params.num_tuples);
       fclose(g_outfp);
       return 0;
     case 4:
@@ -836,10 +826,9 @@ int main(int argc, char **argv) {
     case 6:
     case 7:
       crack_func = crack67;
-      g_nrounds = nrounds;
       break;
     default:
-      fprintf(stderr, "Error: %d\n", nrounds);
+      fprintf(stderr, "Error: %d\n", worker_params.nrounds);
       assert(0);
   }
 
@@ -848,27 +837,33 @@ int main(int argc, char **argv) {
       || pthread_mutex_init(&g_write_lock, NULL) != 0) {
     fprintf(stderr, "Mutex init failed.\n");
     fclose(g_outfp);
-    free(g_tuples);
-    if (g_pairs.pairs != NULL) {
-      free_pairs(&g_pairs);
+    free(worker_params.tuples);
+    if (worker_params.pairs.pairs != NULL) {
+      free_pairs(&worker_params.pairs);
     }
     return 1;
   }
 
   /* Create one thread per processor. */
   uint32_t numproc = sysconf(_SC_NPROCESSORS_ONLN);
+  printf("Starting %d threads.\n", numproc);
   pthread_t thread_id[numproc];
+  /* Ensure the started threads wait until all threads have been created. */
+  pthread_mutex_lock(&g_threadcount_lock);
   for (uint32_t i = 0; i < numproc; i++) {
-    if (pthread_create(&(thread_id[i]), NULL, crack_func, NULL) != 0) {
+    if (pthread_create(&(thread_id[i]), NULL, crack_func, &worker_params) != 0) {
       fprintf(stderr, "Error returned from pthread_create. i=%d. numproc=%d\n", i, numproc);
       fclose(g_outfp);
-      free(g_tuples);
-      if (g_pairs.pairs != NULL) {
-        free_pairs(&g_pairs);
+      free(worker_params.tuples);
+      if (worker_params.pairs.pairs != NULL) {
+        free_pairs(&worker_params.pairs);
       }
+      g_next = UINT_MAX;
+      pthread_mutex_unlock(&g_threadcount_lock);
       return 1;
     }
   }
+  pthread_mutex_unlock(&g_threadcount_lock);
 
   /* Wait for completion and print progress bar. */
   uint32_t tcount;
@@ -879,11 +874,9 @@ int main(int argc, char **argv) {
     pthread_mutex_lock(&g_next_lock);
     uint32_t pct = g_next * 100 / (0xffff - 1);
     pthread_mutex_unlock(&g_next_lock);
-    pthread_mutex_lock(&g_write_lock);
     printf("\r[%s%s] %3" PRIu32 "%%  %" PRIu64 " keys found",
-        bar + 50 - pct / 2, nobar + pct / 2, pct, g_keysfound);
+        bar + 50 - pct / 2, nobar + pct / 2, pct, get_keys_found());
     fflush(g_outfp);
-    pthread_mutex_unlock(&g_write_lock);
     fflush(stdout);
 
     pthread_mutex_lock(&g_threadcount_lock);
@@ -895,9 +888,9 @@ int main(int argc, char **argv) {
   pthread_mutex_destroy(&g_threadcount_lock);
   pthread_mutex_destroy(&g_write_lock);
   fclose(g_outfp);
-  free(g_tuples);
-  if (g_pairs.pairs != NULL) {
-    free_pairs(&g_pairs);
+  free(worker_params.tuples);
+  if (worker_params.pairs.pairs != NULL) {
+    free_pairs(&worker_params.pairs);
   }
   printf("\n");
 
