@@ -6,7 +6,7 @@
    2^49 for five rounds, 2^46 for six rounds, 2^46 for seven rounds, and
    2^25 for eight rounds.
 
-   Copyright (C) 2016-2017 Marcus Dansarie <marcus@dansarie.se>
+   Copyright (C) 2016-2018 Marcus Dansarie <marcus@dansarie.se>
 
    This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
