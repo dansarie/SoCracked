@@ -1,9 +1,10 @@
 /* SoCracked
 
-   Attacks up to seven rounds of the Lattice/SoDark algorithm as specified in
+   Attacks up to eight rounds of the Lattice/SoDark algorithm as specified in
    MIL-STD-188-141 and recovers all candidate keys in time proportional to
    2^9 for two rounds, 2^16 for three rounds, 2^33 for four rounds,
-   2^49 for five rounds, 2^46 for six rounds, and 2^46 for seven rounds.
+   2^49 for five rounds, 2^46 for six rounds, 2^46 for seven rounds, and
+   2^25 for eight rounds.
 
    Copyright (C) 2016-2017 Marcus Dansarie <marcus@dansarie.se>
 
@@ -20,10 +21,12 @@
    You should have received a copy of the GNU General Public License
    along with this program. If not, see <http://www.gnu.org/licenses/>. */
 
+#define _GNU_SOURCE
 #include <assert.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <pthread.h>
+#include <sched.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,6 +46,8 @@ typedef struct {
 typedef struct {
   tuple_t t1;
   tuple_t t2;
+  uint8_t k3[256];
+  uint16_t num_k3;
 } pair_t;
 
 /* An array of tuple-pairs, with some associated data.
@@ -56,7 +61,6 @@ typedef struct {
 
 typedef struct {
   tuple_t *tuples;
-  pairs_t pairs;
   uint32_t num_tuples;
   uint32_t nrounds;
 } worker_param_t;
@@ -67,6 +71,8 @@ pthread_mutex_t g_threadcount_lock;
 uint64_t g_keysfound = 0;           /* Number of keys found so far. */
 uint32_t g_threadcount = 0;         /* Number of working threads. */
 uint32_t g_next = 0;                /* Next work unit. */
+uint32_t g_next_pair = 0;           /* Next pair. (Used when cracking 6, 7, and 8 rounds. */
+pairs_t  g_pairs = {NULL, 0, 0, 0}; /* Candidate pairs. Holds pairs for get_next_678. */
 FILE *g_outfp = NULL;               /* Pointer to output file. */
 
 /* Returns the next work unit, i.e. the next value of two key bytes.
@@ -83,6 +89,23 @@ uint32_t get_next() {
   g_next += 1;
   pthread_mutex_unlock(&g_next_lock);
   return ret;
+}
+
+bool get_next_678(uint32_t *k12, pair_t **pair) {
+  pthread_mutex_lock(&g_next_lock);
+  if (g_next_pair >= g_pairs.num_pairs) {
+    pthread_mutex_unlock(&g_next_lock);
+    return false;
+  }
+  *k12 = g_next;
+  *pair = g_pairs.pairs + g_next_pair;
+  g_next += 1;
+  if (g_next == 0x10000) {
+    g_next = 0;
+    g_next_pair += 1;
+  }
+  pthread_mutex_unlock(&g_next_lock);
+  return true;
 }
 
 static inline bool test_key(uint32_t rounds, uint64_t key, tuple_t *tuples, uint32_t num_tuples) {
@@ -530,51 +553,51 @@ void *crack5(void *p) {
   return NULL;
 }
 
-void *crack67(void *p) {
+void *crack678(void *p) {
   worker_param_t params = *((worker_param_t*)p);
   assert(params.num_tuples > 1);
-  assert(params.nrounds == 6 || params.nrounds == 7);
-  assert(params.pairs.num_pairs > 0);
+  assert(params.nrounds > 5 && params.nrounds < 9);
 
   pthread_mutex_lock(&g_threadcount_lock);
   uint32_t threadid = g_threadcount++;
   pthread_mutex_unlock(&g_threadcount_lock);
 
-  /* Plaintexts. */
-  const uint32_t a01 = (params.pairs.pairs[0].t1.pt >> 16) & 0xff;
-  const uint32_t a02 = (params.pairs.pairs[0].t2.pt >> 16) & 0xff;
-  const uint32_t b01 = (params.pairs.pairs[0].t1.pt >>  8) & 0xff;
-  const uint32_t b02 = (params.pairs.pairs[0].t2.pt >>  8) & 0xff;
-  const uint32_t c01 =  params.pairs.pairs[0].t1.pt        & 0xff;
-  const uint32_t c02 =  params.pairs.pairs[0].t2.pt        & 0xff;
-
-  /* Tweaks. */
-  const uint32_t t11 = (params.pairs.pairs[0].t1.tw >> 56) & 0xff;
-  const uint32_t t12 = (params.pairs.pairs[0].t2.tw >> 56) & 0xff;
-  const uint32_t t21 = (params.pairs.pairs[0].t1.tw >> 48) & 0xff;
-  const uint32_t t22 = (params.pairs.pairs[0].t2.tw >> 48) & 0xff;
-  const uint32_t t31 = (params.pairs.pairs[0].t1.tw >> 40) & 0xff;
-  const uint32_t t32 = (params.pairs.pairs[0].t2.tw >> 40) & 0xff;
-  const uint32_t t41 = (params.pairs.pairs[0].t1.tw >> 32) & 0xff;
-  const uint32_t t42 = (params.pairs.pairs[0].t2.tw >> 32) & 0xff;
-  const uint32_t t51 = (params.pairs.pairs[0].t1.tw >> 24) & 0xff;
-  const uint32_t t52 = (params.pairs.pairs[0].t2.tw >> 24) & 0xff;
-  const uint32_t t61 = (params.pairs.pairs[0].t1.tw >> 16) & 0xff;
-  const uint32_t t62 = (params.pairs.pairs[0].t2.tw >> 16) & 0xff;
-  const uint32_t t71 = (params.pairs.pairs[0].t1.tw >>  8) & 0xff;
-  const uint32_t t72 = (params.pairs.pairs[0].t2.tw >>  8) & 0xff;
-  const uint32_t t81 =  params.pairs.pairs[0].t1.tw        & 0xff;
-  const uint32_t t82 =  params.pairs.pairs[0].t2.tw        & 0xff;
-
   uint32_t k12;
-  while ((k12 = get_next()) < 0x10000) {
+  pair_t *pair;
+  while (get_next_678(&k12, &pair)) {
     int k1 = k12 >> 8;
     int k2 = k12 & 0xff;
+
+    /* Plaintexts. */
+    const uint32_t a01 = (pair->t1.pt >> 16) & 0xff;
+    const uint32_t a02 = (pair->t2.pt >> 16) & 0xff;
+    const uint32_t b01 = (pair->t1.pt >>  8) & 0xff;
+    const uint32_t b02 = (pair->t2.pt >>  8) & 0xff;
+    const uint32_t c01 =  pair->t1.pt        & 0xff;
+    const uint32_t c02 =  pair->t2.pt        & 0xff;
+
+    /* Tweaks. */
+    const uint32_t t11 = (pair->t1.tw >> 56) & 0xff;
+    const uint32_t t12 = (pair->t2.tw >> 56) & 0xff;
+    const uint32_t t21 = (pair->t1.tw >> 48) & 0xff;
+    const uint32_t t22 = (pair->t2.tw >> 48) & 0xff;
+    const uint32_t t31 = (pair->t1.tw >> 40) & 0xff;
+    const uint32_t t32 = (pair->t2.tw >> 40) & 0xff;
+    const uint32_t t41 = (pair->t1.tw >> 32) & 0xff;
+    const uint32_t t42 = (pair->t2.tw >> 32) & 0xff;
+    const uint32_t t51 = (pair->t1.tw >> 24) & 0xff;
+    const uint32_t t52 = (pair->t2.tw >> 24) & 0xff;
+    const uint32_t t61 = (pair->t1.tw >> 16) & 0xff;
+    const uint32_t t62 = (pair->t2.tw >> 16) & 0xff;
+    const uint32_t t81 =  pair->t1.tw        & 0xff;
+    const uint32_t t82 =  pair->t2.tw        & 0xff;
+
     const uint32_t a11 = g_sbox_enc[a01 ^ b01 ^ k1 ^ t11];
     const uint32_t a12 = g_sbox_enc[a02 ^ b02 ^ k1 ^ t12];
     const uint32_t c11 = g_sbox_enc[c01 ^ b01 ^ k2 ^ t21];
     const uint32_t c12 = g_sbox_enc[c02 ^ b02 ^ k2 ^ t22];
-    for (int k3 = 0; k3 < 0x100; k3++) {
+    for (int k3p = 0; k3p < pair->num_k3; k3p++) {
+      int k3 = pair->k3[k3p];
       const uint32_t b11 = g_sbox_enc[a11 ^ b01 ^ c11 ^ k3 ^ t31];
       const uint32_t b12 = g_sbox_enc[a12 ^ b02 ^ c12 ^ k3 ^ t32];
       for (int k4 = 0; k4 < 0x100; k4++) {
@@ -726,27 +749,39 @@ int main(int argc, char **argv) {
   fclose(infp);
   infp = NULL;
   printf("%d tuples loaded.\n", worker_params.num_tuples);
-  if (worker_params.nrounds == 6 || worker_params.nrounds == 7) {
+  if (worker_params.nrounds > 5) {
     printf("Filtering pairs... ");
     fflush(stdout);
 
-    if (!init_pairs(&worker_params.pairs)) {
+    if (!init_pairs(&g_pairs)) {
       free(worker_params.tuples);
       fclose(g_outfp);
       return 1;
     }
 
+    pair_t pair;
+    for (uint16_t i = 0; i < 0x100; i++) {
+      pair.k3[i] = i;
+    }
+    pair.num_k3 = 0x100;
+
     for (int i = 0; i < worker_params.num_tuples; i++) {
       for (int k = i + 1; k < worker_params.num_tuples; k++) {
         uint64_t delta_tw = worker_params.tuples[i].tw ^ worker_params.tuples[k].tw;
-        if (delta_tw & 0xffffffff00ffffffL
-            || ((delta_tw >> 24) & 0xff) == 0) {
+        if (delta_tw & 0xffffffff00ffffffL || ((delta_tw >> 24) & 0xff) == 0) {
           continue;
         }
+        uint8_t a1 =  worker_params.tuples[i].ct >> 16;
+        uint8_t a2 =  worker_params.tuples[k].ct >> 16;
+        uint8_t b1 = (worker_params.tuples[i].ct >> 8) & 0xff;
+        uint8_t b2 = (worker_params.tuples[k].ct >> 8) & 0xff;
+        uint8_t c1 =  worker_params.tuples[i].ct & 0xff;
+        uint8_t c2 =  worker_params.tuples[k].ct & 0xff;
         if (worker_params.nrounds == 6) {
           if (worker_params.tuples[i].ct == worker_params.tuples[k].ct) {
-            pair_t p = {worker_params.tuples[i], worker_params.tuples[k]};
-            if (!add_pair(&worker_params.pairs, p)) {
+            pair.t1 = worker_params.tuples[i];
+            pair.t2 = worker_params.tuples[k];
+            if (!add_pair(&g_pairs, pair)) {
               free(worker_params.tuples);
               fclose(g_outfp);
               return 1;
@@ -754,18 +789,13 @@ int main(int argc, char **argv) {
           }
         } else if (worker_params.nrounds == 7) {
           if (((worker_params.tuples[i].ct ^ worker_params.tuples[k].ct) & 0xff00ff) == 0) {
-            uint8_t a1 =  worker_params.tuples[i].ct >> 16;
-            uint8_t a2 =  worker_params.tuples[k].ct >> 16;
-            uint8_t b1 = (worker_params.tuples[i].ct >> 8) & 0xff;
-            uint8_t b2 = (worker_params.tuples[k].ct >> 8) & 0xff;
-            uint8_t c1 =  worker_params.tuples[i].ct & 0xff;
-            uint8_t c2 =  worker_params.tuples[k].ct & 0xff;
             uint8_t t1 = (worker_params.tuples[i].tw >> 24) & 0xff;
             uint8_t t2 = (worker_params.tuples[k].tw >> 24) & 0xff;
             uint8_t dbh = g_sbox_dec[b1] ^ a1 ^ c1 ^ t1 ^ g_sbox_dec[b2] ^ a2 ^ c2 ^ t2;
             if (dbh == 0) {
-              pair_t p = {worker_params.tuples[i], worker_params.tuples[k]};
-              if (!add_pair(&worker_params.pairs, p)) {
+              pair.t1 = worker_params.tuples[i];
+              pair.t2 = worker_params.tuples[k];
+              if (!add_pair(&g_pairs, pair)) {
                 free(worker_params.tuples);
                 fclose(g_outfp);
                 return 1;
@@ -773,19 +803,46 @@ int main(int argc, char **argv) {
             }
           }
         } else {
-          assert(0);
+          if ((g_sbox_dec[a1] ^ g_sbox_dec[a2]) == (g_sbox_dec[c1] ^ g_sbox_dec[c2])
+              && (g_sbox_dec[a1] ^ g_sbox_dec[a2])
+                  == (g_sbox_dec[b1] ^ g_sbox_dec[b2] ^ a1 ^ a2 ^ c1 ^ c2)) {
+            uint8_t t51 = (worker_params.tuples[i].tw >> 24) & 0xff;
+            uint8_t t52 = (worker_params.tuples[k].tw >> 24) & 0xff;
+            uint8_t t81 =  worker_params.tuples[i].tw & 0xff;
+            uint8_t t82 =  worker_params.tuples[k].tw & 0xff;
+            pair.t1 = worker_params.tuples[i];
+            pair.t2 = worker_params.tuples[k];
+            pair.num_k3 = 0;
+            for (uint32_t k3 = 0; k3 < 0x100; k3++) {
+              if ((g_sbox_dec[g_sbox_dec[b1] ^ a1 ^ c1 ^ k3 ^ t81]
+                  ^ g_sbox_dec[g_sbox_dec[b2] ^ a2 ^ c2 ^ k3 ^ t82]) == (t51 ^ t52)) {
+                pair.k3[pair.num_k3++] = k3;
+              }
+            }
+            if (pair.num_k3 == 0) {
+              continue;
+            }
+            if (!add_pair(&g_pairs, pair)) {
+              free(worker_params.tuples);
+              fclose(g_outfp);
+              return 1;
+            }
+          }
         }
       }
     }
-    printf("%d potential pairs found.\n", worker_params.pairs.num_pairs);
-    if (worker_params.pairs.num_pairs == 0) {
+    printf("%d potential pairs found.\n", g_pairs.num_pairs);
+    if (g_pairs.num_pairs == 0) {
       free(worker_params.tuples);
-      free_pairs(&worker_params.pairs);
+      free_pairs(&g_pairs);
       fclose(g_outfp);
       return 0;
     }
-    printf("Only one pair needed. Using first pair.\n");
-  } /* worker_params.nrounds == 6 || worker_params.nrounds == 7 */
+    if (worker_params.nrounds != 8) {
+      printf("Only one pair needed. Using first pair.\n");
+      g_pairs.num_pairs = 1;
+    }
+  } /* worker_params.nrounds > 5 */
 
   if (worker_params.nrounds < 6) {
     /* Ensure first two pairs are unique. */
@@ -825,7 +882,8 @@ int main(int argc, char **argv) {
       break;
     case 6:
     case 7:
-      crack_func = crack67;
+    case 8:
+      crack_func = crack678;
       break;
     default:
       fprintf(stderr, "Error: %d\n", worker_params.nrounds);
@@ -838,8 +896,8 @@ int main(int argc, char **argv) {
     fprintf(stderr, "Mutex init failed.\n");
     fclose(g_outfp);
     free(worker_params.tuples);
-    if (worker_params.pairs.pairs != NULL) {
-      free_pairs(&worker_params.pairs);
+    if (g_pairs.pairs != NULL) {
+      free_pairs(&g_pairs);
     }
     return 1;
   }
@@ -848,15 +906,21 @@ int main(int argc, char **argv) {
   uint32_t numproc = sysconf(_SC_NPROCESSORS_ONLN);
   printf("Starting %d threads.\n", numproc);
   pthread_t thread_id[numproc];
+  cpu_set_t cpus;
+  pthread_attr_t attr;
+  pthread_attr_init(&attr);
   /* Ensure the started threads wait until all threads have been created. */
   pthread_mutex_lock(&g_threadcount_lock);
   for (uint32_t i = 0; i < numproc; i++) {
-    if (pthread_create(&(thread_id[i]), NULL, crack_func, &worker_params) != 0) {
+    CPU_ZERO(&cpus);
+    CPU_SET(i, &cpus);
+    pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &cpus);
+    if (pthread_create(&(thread_id[i]), &attr, crack_func, &worker_params) != 0) {
       fprintf(stderr, "Error returned from pthread_create. i=%d. numproc=%d\n", i, numproc);
       fclose(g_outfp);
       free(worker_params.tuples);
-      if (worker_params.pairs.pairs != NULL) {
-        free_pairs(&worker_params.pairs);
+      if (g_pairs.pairs != NULL) {
+        free_pairs(&g_pairs);
       }
       g_next = UINT_MAX;
       pthread_mutex_unlock(&g_threadcount_lock);
@@ -864,6 +928,7 @@ int main(int argc, char **argv) {
     }
   }
   pthread_mutex_unlock(&g_threadcount_lock);
+  pthread_attr_destroy(&attr);
 
   /* Wait for completion and print progress bar. */
   uint32_t tcount;
@@ -889,8 +954,8 @@ int main(int argc, char **argv) {
   pthread_mutex_destroy(&g_write_lock);
   fclose(g_outfp);
   free(worker_params.tuples);
-  if (worker_params.pairs.pairs != NULL) {
-    free_pairs(&worker_params.pairs);
+  if (g_pairs.pairs != NULL) {
+    free_pairs(&g_pairs);
   }
   printf("\n");
 

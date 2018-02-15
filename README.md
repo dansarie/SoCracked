@@ -1,11 +1,12 @@
+# SoCracked
+
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.893134.svg)](https://doi.org/10.5281/zenodo.893134)
 
-# SoCracked
 Performs key-recovery attacks on the SoDark family of ciphers for automatic
 link establishment (ALE) in HF radios specified in MIL-STD-188-141. Attacks on
 up to five rounds are possible using virtually any two
-plaintext-ciphertext-tweak tuples. Attacks on six and seven rounds require
-tuples with tweaks that are identical in all but the fifth tweak byte.
+plaintext-ciphertext-tweak tuples. Attacks on six, seven, and eight rounds
+require tuples with tweaks that are identical in all but the fifth tweak byte.
 
 ## Build
 
