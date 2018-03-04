@@ -1,6 +1,6 @@
 # SoCracked
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.893134.svg)](https://doi.org/10.5281/zenodo.893134)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.893133.svg)](https://doi.org/10.5281/zenodo.893133)
 [![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 SoCracked performs key-recovery attacks on the SoDark family of ciphers for
