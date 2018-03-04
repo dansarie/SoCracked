@@ -1,18 +1,35 @@
 # SoCracked
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.893134.svg)](https://doi.org/10.5281/zenodo.893134)
+[![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-Performs key-recovery attacks on the SoDark family of ciphers for automatic
-link establishment (ALE) in HF radios specified in MIL-STD-188-141. Attacks on
-up to five rounds are possible using virtually any two
+SoCracked performs key-recovery attacks on the SoDark family of ciphers for
+automatic link establishment (ALE) in HF radios specified in MIL-STD-188-141.
+Attacks on up to five rounds are possible using virtually any two
 plaintext-ciphertext-tweak tuples. Attacks on six, seven, and eight rounds
 require tuples with tweaks that are identical in all but the fifth tweak byte.
+For an in-depth description of the techniques used, see
+[Cryptanalysis of the SoDark family of cipher algorithms](https://doi.org/10945/56118).
+
+In addition to the attacks described above, the programs `lattice2dimacs` and
+`dimacs2key` generate SAT problem instances from sets of
+plaintext-ciphertext-tweak tuples and convert the solutions back to keys in hex
+format. The number of rounds that can be successfully attacked depends on the
+SAT solver used.
+
+## Dependencies
+
+* [msgpack](https://github.com/msgpack/msgpack-c) (for generating SAT solver
+  instances with `lattice2dimacs`)
 
 ## Build
 
 ```console
+$ sudo apt-get install libmsgpack-dev
 $ gcc -Ofast -march=native -pthread socracked.c -o socracked
 $ gcc -Ofast -march=native sodark.c -o sodark
+$ gcc -march=native lattice2dimacs.c sboxgates/state.c -o lattice2dimacs -lmsgpackc
+$ gcc dimacs2key.c -o dimacs2key
 ```
 
 ## Run
@@ -36,6 +53,8 @@ vectors from the standard and output the matching keys to `keys.txt`:
 $ ./socracked 4 test/test4.txt keys.txt
 ```
 
+### SoDark command line utility
+
 The `sodark` utility can be used to perform encryption and decryption with any
 number of rounds. For example:
 ```console
@@ -50,7 +69,25 @@ will generate 100 plaintext-ciphertext-tweak tuples with the common key
 $ ./sodark -r 3 7 c2284a1ce7be2f 543bd88000017550 100
 ```
 
+### SAT problem instance generation
+
+SAT problem instances are generated with `lattice2dimacs` and solutions are
+converted back to keys in hex format with `dimacs2key`. The following will
+convert the plaintext-ciphertext-tweak tuples in
+[test/test3.txt](test/test3.txt) to a SAT problem instance in DIMACS format,
+pipe the output to a SAT solver and print the found keys to the console:
+
+```console
+$ ./lattice2dimacs 3 3 sbox-cnf/8-366-3219-65213470-9db07eac.cnf test/test3.txt | sat_solver | ./dimacs2key
+```
+
+The command line arguments for `lattice2dimacs` are, in order:
+* SoDark version: 3 or 6;
+* number of rounds;
+* a S-box CNF file generated with [sboxgates](https://github.com/dansarie/sboxgates); and
+* a file with plaintext-ciphertext-tweak tuples in the same format as described above.
+
 ## License
 
-This project is licensed under the GNU General Public License -- see the [LICENSE](LICENSE)
+This project is licensed under the GNU General Public License — see the [LICENSE](LICENSE)
 file for details.

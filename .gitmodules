@@ -1,0 +1,3 @@
+[submodule "sboxgates"]
+	path = sboxgates
+	url = https://github.com/dansarie/sboxgates.git
