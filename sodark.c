@@ -70,11 +70,11 @@ int main(int argc, char **argv) {
     printf("Tweak:  %016" PRIx64 "\n", tweak);
 
     if (strcmp(argv[1], "-3d") == 0) {
-      printf("CT:     %06" PRIx32 "\n",  decrypt_sodark_3(rounds, (uint32_t)pt_ct, key, tweak));
+      printf("PT:     %06" PRIx32 "\n",  decrypt_sodark_3(rounds, (uint32_t)pt_ct, key, tweak));
     } else if (strcmp(argv[1], "-3e") == 0) {
       printf("CT:     %06" PRIx32 "\n",  encrypt_sodark_3(rounds, (uint32_t)pt_ct, key, tweak));
     } else if (strcmp(argv[1], "-6d") == 0) {
-      printf("CT:     %012" PRIx64 "\n", decrypt_sodark_6(rounds, pt_ct, key, tweak));
+      printf("PT:     %012" PRIx64 "\n", decrypt_sodark_6(rounds, pt_ct, key, tweak));
     } else if (strcmp(argv[1], "-6e") == 0) {
       printf("CT:     %012" PRIx64 "\n", encrypt_sodark_6(rounds, pt_ct, key, tweak));
     } else {

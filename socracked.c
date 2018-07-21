@@ -4,7 +4,7 @@
    MIL-STD-188-141 and recovers all candidate keys in time proportional to
    2^9 for two rounds, 2^16 for three rounds, 2^33 for four rounds,
    2^49 for five rounds, 2^46 for six rounds, 2^46 for seven rounds, and
-   2^25 for eight rounds.
+   2^45 for eight rounds.
 
    Copyright (C) 2016-2018 Marcus Dansarie <marcus@dansarie.se>
 
@@ -23,14 +23,17 @@
 
 #define _GNU_SOURCE
 #include <assert.h>
+#include <curses.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <math.h>
 #include <pthread.h>
-#include <sched.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "sodark.h"
@@ -68,46 +71,97 @@ typedef struct {
 pthread_mutex_t g_next_lock;
 pthread_mutex_t g_write_lock;
 pthread_mutex_t g_threadcount_lock;
-uint64_t g_keysfound = 0;           /* Number of keys found so far. */
-uint32_t g_threadcount = 0;         /* Number of working threads. */
-uint32_t g_next = 0;                /* Next work unit. */
-uint32_t g_next_pair = 0;           /* Next pair. (Used when cracking 6, 7, and 8 rounds. */
-pairs_t  g_pairs = {NULL, 0, 0, 0}; /* Candidate pairs. Holds pairs for get_next_678. */
-FILE *g_outfp = NULL;               /* Pointer to output file. */
+bool g_exit = false;                      /* Indicates that the worker threads should shut down. */
+uint32_t g_num_threads;                   /* Number of worker threads. */
+double *g_thread_speeds;                  /* Individual thread cracking speeds in calls to get_next
+                                             per second. */
+struct timeval *g_last_get_next_calls;    /* Used for calculation of thread speeds. */
+uint64_t g_keysfound = 0;                 /* Number of keys found so far. */
+uint64_t g_last_key_found = (uint64_t)-1; /* Last key found. */
+uint32_t g_threadcount = 0;               /* Number of working threads. */
+uint32_t g_next = 0;                      /* Next work unit. */
+uint32_t g_next_pair = 0;                 /* Next pair. (Used when cracking 6, 7, and 8 rounds. */
+pairs_t  g_pairs = {NULL, 0, 0, 0};       /* Candidate pairs. Holds pairs for get_next_678. */
+FILE *g_outfp = NULL;                     /* Pointer to output file. */
 
-/* Returns the next work unit, i.e. the next value of two key bytes.
-   A return value of >= 0x10000 indicates that there are no more work
-   units available and that the thread should stop. */
+const uint32_t STATUS_BUF_LEN = 51;
+char g_status[51] = "";
+pair_t g_current_pair = {{0, 0, 0}, {0, 0, 0}, {0}, 0};
 
-uint32_t get_next() {
-  pthread_mutex_lock(&g_next_lock);
-  if (g_next >= 0x10000) {
-    pthread_mutex_unlock(&g_next_lock);
-    return UINT_MAX;
+/* Updates the current cracking speed in the g_thread_speeds array. Called
+   whenever a thread fetches a new work unit. */
+static void update_thread_speed(uint32_t threadid) {
+  struct timeval time_now;
+  gettimeofday(&time_now, NULL);
+  if (g_last_get_next_calls[threadid].tv_sec > 0) {
+    double elapsed = time_now.tv_sec - g_last_get_next_calls[threadid].tv_sec
+        + (time_now.tv_usec - g_last_get_next_calls[threadid].tv_usec) / 1E6;
+    g_thread_speeds[threadid] = 1.0 / elapsed;
   }
-  uint32_t ret = g_next;
-  g_next += 1;
-  pthread_mutex_unlock(&g_next_lock);
-  return ret;
+  g_last_get_next_calls[threadid] = time_now;
 }
 
-bool get_next_678(uint32_t *k12, pair_t **pair) {
+/* Gets the status line in the user interface. */
+static void set_status(const char *status) {
+  pthread_mutex_lock(&g_write_lock);
+  memset(g_status, ' ', STATUS_BUF_LEN - 1);
+  for (int i = 0; i < strlen(status) && i < STATUS_BUF_LEN - 1; i++) {
+    g_status[i] = status[i];
+  }
+  g_status[STATUS_BUF_LEN - 1] = '\0';
+  pthread_mutex_unlock(&g_write_lock);
+}
+
+/* Returns the current user interface status line. */
+static void get_status(char *status) {
+  pthread_mutex_lock(&g_write_lock);
+  strncpy(status, g_status, STATUS_BUF_LEN - 1);
+  status[STATUS_BUF_LEN - 1] = '\0';
+  pthread_mutex_unlock(&g_write_lock);
+}
+
+/* Returns the next work unit, i.e. the next value of two key bytes.
+   Returns false to indicate that there are no more work units available and
+   that the thread should stop. */
+static bool get_next(uint32_t threadid, uint32_t *next) {
+  update_thread_speed(threadid);
+  pthread_mutex_lock(&g_next_lock);
+  if (g_next >= 0x10000) {
+    set_status("Done. Waiting for threads.");
+    pthread_mutex_unlock(&g_next_lock);
+    return false;
+  }
+  *next = g_next;
+  g_next += 1;
+  pthread_mutex_unlock(&g_next_lock);
+  return true;
+}
+
+/* Returns the next work unit in the case of cracking 6, 7, or 8 rounds.
+   Returns false to indicate that there are no more work units available and
+   that the thread should stop. */
+static bool get_next_678(uint32_t threadid, uint32_t *k12, pair_t **pair) {
+  update_thread_speed(threadid);
   pthread_mutex_lock(&g_next_lock);
   if (g_next_pair >= g_pairs.num_pairs) {
+    set_status("Done. Waiting for threads.");
     pthread_mutex_unlock(&g_next_lock);
     return false;
   }
   *k12 = g_next;
-  *pair = g_pairs.pairs + g_next_pair;
+  *pair = &g_pairs.pairs[g_next_pair];
   g_next += 1;
   if (g_next == 0x10000) {
     g_next = 0;
     g_next_pair += 1;
   }
+  g_current_pair = **pair;
   pthread_mutex_unlock(&g_next_lock);
   return true;
 }
 
+/* Tests a candidate key against all known tuples. Returns true if the key is
+   a match for all of them. */
 static inline bool test_key(uint32_t rounds, uint64_t key, tuple_t *tuples, uint32_t num_tuples) {
   for (uint32_t i = 0; i < num_tuples; i++) {
     if (encrypt_sodark_3(rounds, tuples[i].pt, key, tuples[i].tw) != tuples[i].ct) {
@@ -117,13 +171,17 @@ static inline bool test_key(uint32_t rounds, uint64_t key, tuple_t *tuples, uint
   return true;
 }
 
+/* Called by a cracking thread to write a found key to file and to update the
+   number of keys found.*/
 static void found_key(uint64_t key) {
   pthread_mutex_lock(&g_write_lock);
   fprintf(g_outfp, "%014" PRIx64 "\n", key);
   g_keysfound += 1;
+  g_last_key_found = key;
   pthread_mutex_unlock(&g_write_lock);
 }
 
+/* Returns the number of keys found so far. */
 static uint64_t get_keys_found() {
   pthread_mutex_lock(&g_write_lock);
   uint64_t keysfound = g_keysfound;
@@ -131,6 +189,15 @@ static uint64_t get_keys_found() {
   return keysfound;
 }
 
+/* Returns the last key found. */
+static uint64_t get_last_key_found() {
+  pthread_mutex_lock(&g_write_lock);
+  uint64_t last_key = g_last_key_found;
+  pthread_mutex_unlock(&g_write_lock);
+  return last_key;
+}
+
+/* Cracks two rounds. */
 void crack2(tuple_t *tuples, uint32_t num_tuples) {
   assert(num_tuples > 1);
   const uint8_t tw11 = (tuples[0].tw >> 56) & 0xff;
@@ -209,6 +276,7 @@ void crack2(tuple_t *tuples, uint32_t num_tuples) {
   }
 }
 
+/* Cracks three rounds. */
 void crack3(tuple_t *tuples, uint32_t num_tuples) {
   assert(num_tuples > 1);
   const uint8_t tw11 = (tuples[0].tw >> 56) & 0xff;
@@ -304,6 +372,7 @@ void crack3(tuple_t *tuples, uint32_t num_tuples) {
   }
 }
 
+/* Cracking thread function for 4 rounds. */
 void *crack4(void *p) {
   worker_param_t params = *((worker_param_t*)p);
   tuple_t *tuples = params.tuples;
@@ -314,6 +383,13 @@ void *crack4(void *p) {
   pthread_mutex_lock(&g_threadcount_lock);
   uint32_t threadid = g_threadcount++;
   pthread_mutex_unlock(&g_threadcount_lock);
+
+  struct delta **lists = NULL;
+  struct delta *items = NULL;
+
+  if (g_exit) {
+    goto exit4;
+  }
 
   /* Precalculate tweaks. */
   const uint32_t r1tw1 = tuples[0].tw >> 40;
@@ -345,8 +421,8 @@ void *crack4(void *p) {
     struct delta *last;
   };
 
-  struct delta **lists = (struct delta**)malloc(0x10000 * sizeof(struct delta*));
-  struct delta *items = (struct delta*)malloc(0x10000 * sizeof(struct delta));
+  lists = (struct delta**)malloc(0x10000 * sizeof(struct delta*));
+  items = (struct delta*)malloc(0x10000 * sizeof(struct delta));
   if (lists == NULL || items == NULL) {
     fprintf(stderr, "Error: malloc returned null in thread %" PRIu32 ".\n", threadid);
     if (lists != NULL) {
@@ -362,7 +438,10 @@ void *crack4(void *p) {
   }
 
   uint32_t k23;
-  while ((k23 = get_next()) < 0x10000) {
+  while (get_next(threadid, &k23)) {
+    if (g_exit) {
+      goto exit4;
+    }
     const uint8_t k2 = k23 >> 8;
     const uint8_t k3 = k23 & 0xff;
     memset(lists, 0, 0x10000 * sizeof(struct delta*));
@@ -445,6 +524,9 @@ void *crack4(void *p) {
     }
   }
 
+exit4:
+  free(lists);
+  free(items);
   pthread_mutex_lock(&g_threadcount_lock);
   g_threadcount -= 1;
   pthread_mutex_unlock(&g_threadcount_lock);
@@ -452,6 +534,7 @@ void *crack4(void *p) {
   return NULL;
 }
 
+/* Cracking thread function for 5 rounds. */
 void *crack5(void *p) {
   worker_param_t params = *((worker_param_t*)p);
   tuple_t *tuples = params.tuples;
@@ -462,6 +545,10 @@ void *crack5(void *p) {
   pthread_mutex_lock(&g_threadcount_lock);
   uint32_t threadid = g_threadcount++;
   pthread_mutex_unlock(&g_threadcount_lock);
+
+  if (g_exit) {
+    goto exit5;
+  }
 
   /* Precalculate tweaks. */
   const uint32_t r1tw1 = tuples[0].tw >> 40;
@@ -484,7 +571,7 @@ void *crack5(void *p) {
   struct delta *lists[0x100];
 
   uint32_t k13;
-  while ((k13 = get_next()) < 0x10000) {
+  while (get_next(threadid, &k13)) {
     const uint8_t k1 = k13 >> 8;
     const uint8_t k3 = k13 & 0xff;
     for (uint32_t k456 = 0; k456 < 0x1000000; k456++) {
@@ -512,6 +599,9 @@ void *crack5(void *p) {
         }
       }
       for (uint16_t k7 = 0; k7 < 0x100; k7++) {
+        if (g_exit) {
+          goto exit5;
+        }
         uint32_t k671 = ((k456 & 0xff) << 16) | (k7 << 8) | k1;
         uint32_t v1 = dec_one_round_3(dec_one_round_3(tuples[0].ct, k671 ^ r5tw1), k345 ^ r4tw1);
         uint32_t v2 = dec_one_round_3(dec_one_round_3(tuples[1].ct, k671 ^ r5tw2), k345 ^ r4tw2);
@@ -546,6 +636,7 @@ void *crack5(void *p) {
     }
   }
 
+exit5:
   pthread_mutex_lock(&g_threadcount_lock);
   g_threadcount -= 1;
   pthread_mutex_unlock(&g_threadcount_lock);
@@ -553,6 +644,7 @@ void *crack5(void *p) {
   return NULL;
 }
 
+/* Cracking thread function for 6, 7, and 8 rounds. */
 void *crack678(void *p) {
   worker_param_t params = *((worker_param_t*)p);
   assert(params.num_tuples > 1);
@@ -562,9 +654,13 @@ void *crack678(void *p) {
   uint32_t threadid = g_threadcount++;
   pthread_mutex_unlock(&g_threadcount_lock);
 
+  if (g_exit) {
+    goto exit678;
+  }
+
   uint32_t k12;
   pair_t *pair;
-  while (get_next_678(&k12, &pair)) {
+  while (get_next_678(threadid, &k12, &pair)) {
     int k1 = k12 >> 8;
     int k2 = k12 & 0xff;
 
@@ -601,6 +697,9 @@ void *crack678(void *p) {
       const uint32_t b11 = g_sbox_enc[a11 ^ b01 ^ c11 ^ k3 ^ t31];
       const uint32_t b12 = g_sbox_enc[a12 ^ b02 ^ c12 ^ k3 ^ t32];
       for (int k4 = 0; k4 < 0x100; k4++) {
+        if (g_exit) {
+          goto exit678;
+        }
         const uint32_t a21 = g_sbox_enc[a11 ^ b11 ^ k4 ^ t41];
         const uint32_t a22 = g_sbox_enc[a12 ^ b12 ^ k4 ^ t42];
         for (int k5 = 0; k5 < 0x100; k5++) {
@@ -627,6 +726,7 @@ void *crack678(void *p) {
     }
   }
 
+exit678:
   pthread_mutex_lock(&g_threadcount_lock);
   g_threadcount -= 1;
   pthread_mutex_unlock(&g_threadcount_lock);
@@ -634,6 +734,7 @@ void *crack678(void *p) {
   return NULL;
 }
 
+/* Initializes a list of tuple-pairs. */
 static bool init_pairs(pairs_t *pairs) {
   assert(pairs != NULL);
   pairs->allocsize = pairs->allocstep = 100;
@@ -647,6 +748,7 @@ static bool init_pairs(pairs_t *pairs) {
   return true;
 }
 
+/* Frees a list of tuple-pairs. */
 static void free_pairs(pairs_t *pairs) {
   assert(pairs != NULL);
   free(pairs->pairs);
@@ -655,6 +757,7 @@ static void free_pairs(pairs_t *pairs) {
   pairs->num_pairs = 0;
 }
 
+/* Adds a pair to a list of tuple-pairs. Returns true on success and false on failure. */
 static bool add_pair(pairs_t *pairs, pair_t p) {
   assert(pairs != NULL);
   assert(pairs->allocsize > 0);
@@ -674,6 +777,125 @@ static bool add_pair(pairs_t *pairs, pair_t p) {
   return true;
 }
 
+/* Draws the static background to the screen. */
+static void draw_background() {
+  clear();
+  bkgd(COLOR_PAIR(1));
+  border(0, 0, 0, 0, 0, 0, 0, 0);
+  attrset(COLOR_PAIR(1));
+  mvprintw(1,  1, "SoCracked v. 1.0");
+  mvprintw(3,  1, "Start time:");
+  mvprintw(4,  1, "Elapsed time:");
+  mvprintw(5,  1, "Estimated finish:");
+  mvprintw(6,  1, "Success probability:");
+  mvprintw(8,  1, "Rounds:");
+  mvprintw(9,  1, "Tuple 1:");
+  mvprintw(10, 1, "Tuple 2:");
+  mvprintw(11, 1, "Keys found:");
+  mvprintw(12, 1, "Last key found:");
+  mvprintw(14, 1, "Pairs:");
+  mvprintw(15, 1, "Keys:");
+  mvprintw(17, 1, "Status:");
+  mvprintw(22, 1, "Press Q to quit.");
+  mvprintw(14, 22, "[");
+  mvprintw(14, 77, "]");
+  mvprintw(15, 22, "[");
+  mvprintw(15, 77, "]");
+  refresh();
+}
+
+/* Draws all dynamic content on the screen.
+   start_time  UTC time that the program was started.
+   psuccess    Calculated probability of success, as a percentage (0.0 <= p <= 100.0).
+               Values outside this range result in no probability being printed.
+   rounds      Number of rounds cracked. */
+static void draw_foreground(struct timeval start_time, double psuccess, uint32_t rounds) {
+  attrset(COLOR_PAIR(2));
+
+  /* Start time */
+  struct tm *stime = gmtime(&start_time.tv_sec);
+  mvprintw(3,  22, "%04d-%02d-%02d %02d:%02d:%02d UTC", 1900 + stime->tm_year, stime->tm_mon + 1,
+      stime->tm_mday, stime->tm_hour, stime->tm_min, stime->tm_sec);
+
+  /* Elapsed time */
+  struct timeval time_now;
+  gettimeofday(&time_now, NULL);
+  int elapsed = time_now.tv_sec - start_time.tv_sec;
+  int days = elapsed / 86400;
+  elapsed -= days * 86400;
+  int hours = elapsed / 3600;
+  elapsed -= hours * 3600;
+  int minutes = elapsed / 60;
+  elapsed -= minutes * 60;
+  int seconds = elapsed;
+  mvprintw(4,  22, "%dd %02d:%02d:%02d", days, hours, minutes, seconds);
+
+  /* Finish time */
+  if (g_thread_speeds != NULL) {
+    double tspeed = 0.0;
+    bool all_valid = true;
+    for (int i = 0; i < g_num_threads; i++) {
+      if (g_thread_speeds[i] <= 0.0) {
+        all_valid = false;
+        break;
+      }
+      tspeed += g_thread_speeds[i];
+    }
+    if (all_valid) {
+      time_t finish_time = start_time.tv_sec + (0x10000 - g_next) / tspeed;
+      if (rounds > 5) {
+        pthread_mutex_lock(&g_next_lock);
+        finish_time += (0x10000 * (g_pairs.num_pairs - g_next_pair - 1)) / tspeed;
+        pthread_mutex_unlock(&g_next_lock);
+      }
+      stime = gmtime(&finish_time);
+      if (stime != NULL) {
+        mvprintw(5,  22, "%04d-%02d-%02d %02d:%02d:%02d UTC", 1900 + stime->tm_year,
+            stime->tm_mon + 1, stime->tm_mday, stime->tm_hour, stime->tm_min, stime->tm_sec);
+      }
+    }
+  }
+
+  if (psuccess >= 0.0 && psuccess <= 100.0) {
+    mvprintw(6, 22, "%.1f%%", psuccess);
+  }
+  mvprintw(8,  22, "%d", rounds);
+  pthread_mutex_lock(&g_next_lock);
+  mvprintw(9,  22, "%06" PRIx32 " %06" PRIx32 " %016" PRIx64,
+      g_current_pair.t1.pt, g_current_pair.t1.ct, g_current_pair.t1.tw); /* Tuple 1 */
+  mvprintw(10, 22, "%06" PRIx32 " %06" PRIx32 " %016" PRIx64,
+      g_current_pair.t2.pt, g_current_pair.t2.ct, g_current_pair.t2.tw); /* Tuple 2 */
+  pthread_mutex_unlock(&g_next_lock);
+  mvprintw(11, 22, "%d", get_keys_found());
+  uint64_t last_key = get_last_key_found();
+  if (last_key < 0x100000000000000) {
+    mvprintw(12, 22, "%014" PRIx64, get_last_key_found());
+  }
+
+  pthread_mutex_lock(&g_next_lock);
+  mvprintw(14, 8,  "%d of %d",
+      rounds > 5 ? (g_next_pair == g_pairs.num_pairs ? g_pairs.num_pairs : g_next_pair + 1)   : 1,
+      rounds > 5 ? g_pairs.num_pairs : 1);
+  pthread_mutex_unlock(&g_next_lock);
+
+  pthread_mutex_lock(&g_next_lock);
+  const char bar[] = "                                                      ";
+  double pct = g_next * 100.0 / (0xffff - 1);
+  double pct_per_bar = 100.0 / strlen(bar);
+  int bars = (int)(pct / pct_per_bar);
+  pthread_mutex_unlock(&g_next_lock);
+  mvprintw(15, 8,  "%.1f%%   ", pct); /* Key percentage. */
+  char status[STATUS_BUF_LEN];
+  get_status(status);
+  mvprintw(17, 22, "%s", status);
+
+  mvprintw(15, 23, "%s", bar);
+  attrset(COLOR_PAIR(3));
+  mvprintw(15, 23, "%s", bar + strlen(bar) - bars);
+
+  refresh();
+}
+
 int main(int argc, char **argv) {
   create_sodark_dec_sbox();
 
@@ -683,25 +905,30 @@ int main(int argc, char **argv) {
   assert(encrypt_sodark_3(3, 0x54e0cd, 0xc2284a1ce7be2f, 0x543bd88000017550) == 0x41db0c);
   assert(encrypt_sodark_3(4, 0x54e0cd, 0xc2284a1ce7be2f, 0x543bd88000017550) == 0x987c6d);
 
+  /* Check if correct number of arguments. */
   if (argc != 4) {
-    printf("Usage: %s rounds infile outfile\n\n", argv[0]);
+    fprintf(stderr, "Usage: %s rounds infile outfile\n\n", argv[0]);
     return 1;
   }
 
   worker_param_t worker_params;
   memset(&worker_params, 0, sizeof(worker_param_t));
+
+  /* Check if the number of rounds is supported. */
   worker_params.nrounds = atoi(argv[1]);
   if (worker_params.nrounds < 2 || worker_params.nrounds > 8) {
     fprintf(stderr, "Bad number of rounds. Only 2 - 8 rounds are supported.\n");
     return 1;
   }
 
+  /* Open input file. */
   FILE *infp = fopen(argv[2], "r");
   if (infp == NULL) {
     fprintf(stderr, "Could not open input file for reading.\n");
     return 1;
   }
 
+  /* Open output file. */
   g_outfp = fopen(argv[3], "w");
   if (g_outfp == NULL) {
     fprintf(stderr, "Could not open output file for writing.\n");
@@ -709,20 +936,44 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  printf("Reading input file... ");
-  fflush(stdout);
+  /* Record start time. */
+  struct timeval start_time;
+  gettimeofday(&start_time, NULL);
 
+  /* Draw a screen if cracking more than 3 rounds. Three rounds and fewer are cracked so fast that
+     drawing anything to the screen is unnecessary. */
+  double psuccess = -1.0;
+  if (worker_params.nrounds > 3) {
+    initscr();
+    cbreak();
+    nodelay(stdscr, TRUE);
+    if (has_colors()) {
+      start_color();
+      init_pair(1, COLOR_WHITE, COLOR_BLUE);
+      init_pair(2, COLOR_GREEN, COLOR_BLUE);
+      init_pair(3, COLOR_GREEN, COLOR_GREEN);
+    }
+    curs_set(0);
+    draw_background();
+    draw_foreground(start_time, psuccess, worker_params.nrounds);
+    set_status("Reading input file... ");
+    fflush(stdout);
+  }
+
+  /* Allocate memory for input tuples. */
   const int allocstep = 1000;
   int allocsize = allocstep;
   worker_params.num_tuples = 0;
   worker_params.tuples = malloc(sizeof(tuple_t) * allocstep);
   if (worker_params.tuples == NULL) {
+    endwin();
     fprintf(stderr, "Memory allocation error on line %d.\n", __LINE__);
     fclose(g_outfp);
     fclose(infp);
     return 1;
   }
 
+  /* Read tuples from input file. */
   while (!feof(infp)) {
     if (fscanf(infp, "%06x %06x %016" PRIx64 "\n",
         &worker_params.tuples[worker_params.num_tuples].pt,
@@ -733,7 +984,8 @@ int main(int argc, char **argv) {
         allocsize += allocstep;
         worker_params.tuples = realloc(worker_params.tuples, sizeof(tuple_t) * allocsize);
         if (worker_params.tuples == NULL) {
-          fprintf(stderr, "Memory allocation error.\n");
+          endwin();
+          fprintf(stderr, "Memory allocation error on line %d.\n", __LINE__);
           fclose(g_outfp);
           fclose(infp);
           return 1;
@@ -748,12 +1000,15 @@ int main(int argc, char **argv) {
   }
   fclose(infp);
   infp = NULL;
-  printf("%d tuples loaded.\n", worker_params.num_tuples);
+
+  /* Perform filtering step when cracking more than 5 rounds. */
   if (worker_params.nrounds > 5) {
-    printf("Filtering pairs... ");
+    set_status("Filtering pairs... ");
     fflush(stdout);
 
     if (!init_pairs(&g_pairs)) {
+      /* init_pairs has printed an error message. */
+      endwin();
       free(worker_params.tuples);
       fclose(g_outfp);
       return 1;
@@ -782,6 +1037,8 @@ int main(int argc, char **argv) {
             pair.t1 = worker_params.tuples[i];
             pair.t2 = worker_params.tuples[k];
             if (!add_pair(&g_pairs, pair)) {
+              /* add_pair has printed an error message. */
+              endwin();
               free(worker_params.tuples);
               fclose(g_outfp);
               return 1;
@@ -796,6 +1053,8 @@ int main(int argc, char **argv) {
               pair.t1 = worker_params.tuples[i];
               pair.t2 = worker_params.tuples[k];
               if (!add_pair(&g_pairs, pair)) {
+                /* add_pair has printed an error message. */
+                endwin();
                 free(worker_params.tuples);
                 fclose(g_outfp);
                 return 1;
@@ -823,6 +1082,8 @@ int main(int argc, char **argv) {
               continue;
             }
             if (!add_pair(&g_pairs, pair)) {
+              /* add_pair has printed an error message. */
+              endwin();
               free(worker_params.tuples);
               fclose(g_outfp);
               return 1;
@@ -831,15 +1092,18 @@ int main(int argc, char **argv) {
         }
       }
     }
-    printf("%d potential pairs found.\n", g_pairs.num_pairs);
+
+    /* Check if any viable pairs were found. */
     if (g_pairs.num_pairs == 0) {
+      endwin();
       free(worker_params.tuples);
       free_pairs(&g_pairs);
       fclose(g_outfp);
+      fprintf(stderr, "No candidate pairs found.\n");
       return 0;
     }
     if (worker_params.nrounds != 8) {
-      printf("Only one pair needed. Using first pair.\n");
+      /* Only one pair needed. Using first pair. */
       g_pairs.num_pairs = 1;
     }
   } /* worker_params.nrounds > 5 */
@@ -855,23 +1119,36 @@ int main(int argc, char **argv) {
       }
       worker_params.num_tuples -= 1;
     }
+    g_current_pair.t1 = worker_params.tuples[0];
+    g_current_pair.t2 = worker_params.tuples[1];
   }
 
   if (worker_params.nrounds < 6 && worker_params.num_tuples < 2) {
-    fprintf(stderr, "Error: At least two valid tuples are required.\n");
+    endwin();
     free(worker_params.tuples);
     fclose(g_outfp);
+    fprintf(stderr, "Error: At least two valid tuples are required.\n");
     return 1;
   }
 
+  /* Calculate success probability. */
+  if (worker_params.nrounds < 8) {
+    psuccess = 100.0;
+  } else {
+    psuccess = 100.0 * (1.0 - pow(0.99, g_pairs.num_pairs));
+  }
+
+  /* Select cracking function. */
   void *(*crack_func)(void*) = NULL;
   switch (worker_params.nrounds) {
     case 2:
       crack2(worker_params.tuples, worker_params.num_tuples);
+      free(worker_params.tuples);
       fclose(g_outfp);
       return 0;
     case 3:
       crack3(worker_params.tuples, worker_params.num_tuples);
+      free(worker_params.tuples);
       fclose(g_outfp);
       return 0;
     case 4:
@@ -890,65 +1167,106 @@ int main(int argc, char **argv) {
       assert(0);
   }
 
+  /* Initialize mutexes. */
   if (pthread_mutex_init(&g_next_lock, NULL) != 0
       || pthread_mutex_init(&g_threadcount_lock, NULL) != 0
       || pthread_mutex_init(&g_write_lock, NULL) != 0) {
-    fprintf(stderr, "Mutex init failed.\n");
+    endwin();
     fclose(g_outfp);
     free(worker_params.tuples);
     if (g_pairs.pairs != NULL) {
       free_pairs(&g_pairs);
     }
+    fprintf(stderr, "Mutex init failed.\n");
     return 1;
   }
 
-  /* Create one thread per processor. */
-  uint32_t numproc = sysconf(_SC_NPROCESSORS_ONLN);
-  printf("Starting %d threads.\n", numproc);
-  pthread_t thread_id[numproc];
+  g_num_threads = sysconf(_SC_NPROCESSORS_ONLN);
+  g_thread_speeds = malloc(sizeof(double) * g_num_threads);
+  g_last_get_next_calls = malloc(sizeof(struct timeval) * g_num_threads);
+  if (g_thread_speeds == NULL || g_last_get_next_calls == NULL) {
+    endwin();
+    fprintf(stderr, "Malloc failed on line %d.\n", __LINE__);
+    fclose(g_outfp);
+    free(worker_params.tuples);
+    if (g_pairs.pairs != NULL) {
+      free_pairs(&g_pairs);
+    }
+    free(g_thread_speeds);
+    free(g_last_get_next_calls);
+    pthread_mutex_destroy(&g_next_lock);
+    pthread_mutex_destroy(&g_threadcount_lock);
+    pthread_mutex_destroy(&g_write_lock);
+    return 1;
+  }
+  memset(g_thread_speeds, 0, sizeof(double) * g_num_threads);
+  memset(g_last_get_next_calls, 0, sizeof(double) * g_num_threads);
+
+  pthread_t thread_id[g_num_threads];
   cpu_set_t cpus;
   pthread_attr_t attr;
   pthread_attr_init(&attr);
   /* Ensure the started threads wait until all threads have been created. */
   pthread_mutex_lock(&g_threadcount_lock);
-  for (uint32_t i = 0; i < numproc; i++) {
+  /* Create one thread per processor. */
+  for (uint32_t i = 0; i < g_num_threads; i++) {
     CPU_ZERO(&cpus);
     CPU_SET(i, &cpus);
     pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &cpus);
     if (pthread_create(&(thread_id[i]), &attr, crack_func, &worker_params) != 0) {
-      fprintf(stderr, "Error returned from pthread_create. i=%d. numproc=%d\n", i, numproc);
+      g_exit = true;
+      pthread_mutex_unlock(&g_threadcount_lock);
+      endwin();
+      fprintf(stderr, "Error returned from pthread_create. i=%d. g_num_threads=%d\n",
+          i, g_num_threads);
       fclose(g_outfp);
       free(worker_params.tuples);
       if (g_pairs.pairs != NULL) {
         free_pairs(&g_pairs);
       }
-      g_next = UINT_MAX;
-      pthread_mutex_unlock(&g_threadcount_lock);
+      free(g_thread_speeds);
+      free(g_last_get_next_calls);
+      pthread_attr_destroy(&attr);
+      pthread_mutex_destroy(&g_next_lock);
+      pthread_mutex_destroy(&g_write_lock);
+      pthread_mutex_destroy(&g_threadcount_lock);
       return 1;
     }
   }
   pthread_mutex_unlock(&g_threadcount_lock);
   pthread_attr_destroy(&attr);
 
-  /* Wait for completion and print progress bar. */
+  /* Wait for completion and keep screen updated. */
+  set_status("Performing key search.");
   uint32_t tcount;
-  const uint8_t bar[] = "**************************************************";
-  const uint8_t nobar[] = "..................................................";
   do {
+    draw_foreground(start_time, psuccess, worker_params.nrounds);
     usleep(100000);
-    pthread_mutex_lock(&g_next_lock);
-    uint32_t pct = g_next * 100 / (0xffff - 1);
-    pthread_mutex_unlock(&g_next_lock);
-    printf("\r[%s%s] %3" PRIu32 "%%  %" PRIu64 " keys found",
-        bar + 50 - pct / 2, nobar + pct / 2, pct, get_keys_found());
-    fflush(g_outfp);
-    fflush(stdout);
 
     pthread_mutex_lock(&g_threadcount_lock);
     tcount = g_threadcount;
     pthread_mutex_unlock(&g_threadcount_lock);
+    int keypress;
+    do {
+      keypress = getch();
+      if (keypress == KEY_RESIZE) {
+        draw_background();
+      } else if (keypress == 'q' || keypress == 'Q') {
+        g_exit = true;
+        set_status("Exiting...");
+      }
+    } while (keypress != ERR);
   } while (tcount > 0);
 
+  endwin();
+  uint64_t keysfound = get_keys_found();
+  if (keysfound == 0) {
+    printf("No keys found.\n");
+  } else if (keysfound == 1) {
+    printf("1 key found.\n");
+  } else {
+    printf("%" PRIu64 " keys found.\n", keysfound);
+  }
   pthread_mutex_destroy(&g_next_lock);
   pthread_mutex_destroy(&g_threadcount_lock);
   pthread_mutex_destroy(&g_write_lock);
@@ -957,7 +1275,8 @@ int main(int argc, char **argv) {
   if (g_pairs.pairs != NULL) {
     free_pairs(&g_pairs);
   }
-  printf("\n");
+  free(g_thread_speeds);
+  free(g_last_get_next_calls);
 
   return 0;
 }

@@ -19,17 +19,19 @@ SAT solver used.
 
 ## Dependencies
 
+* [CMake](https://cmake.org/) (build system)
 * [msgpack](https://github.com/msgpack/msgpack-c) (for generating SAT solver
   instances with `lattice2dimacs`)
 
 ## Build
 
 ```console
-$ sudo apt-get install libmsgpack-dev
-$ gcc -Ofast -march=native -pthread socracked.c -o socracked
-$ gcc -Ofast -march=native sodark.c -o sodark
-$ gcc -march=native lattice2dimacs.c sboxgates/state.c -o lattice2dimacs -lmsgpackc
-$ gcc dimacs2key.c -o dimacs2key
+sudo apt-get install libmsgpack-dev
+mkdir build
+cd build
+cmake ..
+make
+make install
 ```
 
 ## Run
@@ -50,7 +52,7 @@ f32f5f ceb446 543bd88000017550
 The following will perform a key recovery attack on four rounds using the test
 vectors from the standard and output the matching keys to `keys.txt`:
 ```console
-$ ./socracked 4 test/test4.txt keys.txt
+./socracked 4 test/test4.txt keys.txt
 ```
 
 ### SoDark command line utility
@@ -58,7 +60,7 @@ $ ./socracked 4 test/test4.txt keys.txt
 The `sodark` utility can be used to perform encryption and decryption with any
 number of rounds. For example:
 ```console
-$ ./sodark -3e 4 54e0cd c2284a1ce7be2f 543bd88000017550
+./sodark -3e 4 54e0cd c2284a1ce7be2f 543bd88000017550
 ```
 
 It can also be used to generate random plaintexts for testing. The following
@@ -66,7 +68,7 @@ will generate 100 plaintext-ciphertext-tweak tuples with the common key
 `c2284a1ce7be2f` and tweak `543bd88000017550`.
 
 ```console
-$ ./sodark -r 3 7 c2284a1ce7be2f 543bd88000017550 100
+./sodark -r 3 7 c2284a1ce7be2f 543bd88000017550 100
 ```
 
 ### SAT problem instance generation
@@ -78,7 +80,7 @@ convert the plaintext-ciphertext-tweak tuples in
 pipe the output to a SAT solver and print the found keys to the console:
 
 ```console
-$ ./lattice2dimacs 3 3 sbox-cnf/8-366-3219-65213470-9db07eac.cnf test/test3.txt | sat_solver | ./dimacs2key
+./lattice2dimacs 3 3 sbox-cnf/8-366-3219-65213470-9db07eac.cnf test/test3.txt | sat_solver | ./dimacs2key
 ```
 
 The command line arguments for `lattice2dimacs` are, in order:
