@@ -27,6 +27,8 @@ SAT solver used.
 
 ```console
 sudo apt-get install libmsgpack-dev
+git submodule init
+git submodule update
 mkdir build
 cd build
 cmake ..
