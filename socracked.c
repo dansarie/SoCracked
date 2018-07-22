@@ -777,45 +777,73 @@ static bool add_pair(pairs_t *pairs, pair_t p) {
   return true;
 }
 
+#define PRINT_BACKGROUND_STRING(y, x, maxy, str) \
+  if (y < (maxy - 2)) {\
+    mvprintw(y, x, str);\
+  } else {\
+    refresh();\
+    return;\
+  }
+
 /* Draws the static background to the screen. */
-static void draw_background() {
+static void draw_background(WINDOW *screen) {
+  assert(screen != NULL);
+  int maxx = 0;
+  int maxy = 0;
+  getmaxyx(screen, maxy, maxx);
   clear();
   bkgd(COLOR_PAIR(1));
   border(0, 0, 0, 0, 0, 0, 0, 0);
   attrset(COLOR_PAIR(1));
-  mvprintw(1,  1, "SoCracked v. 1.0");
-  mvprintw(3,  1, "Start time:");
-  mvprintw(4,  1, "Elapsed time:");
-  mvprintw(5,  1, "Estimated finish:");
-  mvprintw(6,  1, "Success probability:");
-  mvprintw(8,  1, "Rounds:");
-  mvprintw(9,  1, "Tuple 1:");
-  mvprintw(10, 1, "Tuple 2:");
-  mvprintw(11, 1, "Keys found:");
-  mvprintw(12, 1, "Last key found:");
-  mvprintw(14, 1, "Pairs:");
-  mvprintw(15, 1, "Keys:");
-  mvprintw(17, 1, "Status:");
-  mvprintw(22, 1, "Press Q to quit.");
-  mvprintw(14, 22, "[");
-  mvprintw(14, 77, "]");
-  mvprintw(15, 22, "[");
-  mvprintw(15, 77, "]");
+  PRINT_BACKGROUND_STRING(1,  1,  maxy, "SoCracked v. 1.0");
+  PRINT_BACKGROUND_STRING(3,  1,  maxy, "Start time:");
+  PRINT_BACKGROUND_STRING(4,  1,  maxy, "Elapsed time:");
+  PRINT_BACKGROUND_STRING(5,  1,  maxy, "Estimated finish:");
+  PRINT_BACKGROUND_STRING(6,  1,  maxy, "Success probability:");
+  PRINT_BACKGROUND_STRING(8,  1,  maxy, "Rounds:");
+  PRINT_BACKGROUND_STRING(9,  1,  maxy, "Tuple 1:");
+  PRINT_BACKGROUND_STRING(10, 1,  maxy, "Tuple 2:");
+  PRINT_BACKGROUND_STRING(11, 1,  maxy, "Keys found:");
+  PRINT_BACKGROUND_STRING(12, 1,  maxy, "Last key found:");
+  PRINT_BACKGROUND_STRING(14, 1,  maxy, "Pairs:");
+  PRINT_BACKGROUND_STRING(14, 22, maxy, "[");
+  PRINT_BACKGROUND_STRING(14, 77, maxy, "]");
+  PRINT_BACKGROUND_STRING(15, 1,  maxy, "Keys:");
+  PRINT_BACKGROUND_STRING(15, 22, maxy, "[");
+  PRINT_BACKGROUND_STRING(15, 77, maxy, "]");
+  PRINT_BACKGROUND_STRING(17, 1,  maxy, "Status:");
   refresh();
 }
+
+#define RETURN_IF_MAXY(maxy, y) if (y > (maxy - 3)) { refresh(); return; }
 
 /* Draws all dynamic content on the screen.
    start_time  UTC time that the program was started.
    psuccess    Calculated probability of success, as a percentage (0.0 <= p <= 100.0).
                Values outside this range result in no probability being printed.
    rounds      Number of rounds cracked. */
-static void draw_foreground(struct timeval start_time, double psuccess, uint32_t rounds) {
+static void draw_foreground(struct timeval start_time, double psuccess, uint32_t rounds,
+    WINDOW *screen, bool qonce) {
+  assert(screen != NULL);
+  attrset(COLOR_PAIR(1));
+  int maxx = 0;
+  int maxy = 0;
+  getmaxyx(screen, maxy, maxx);
+  if (qonce) {
+    mvprintw(maxy - 2, 1, "Press Q to quit.      ");
+  } else {
+    mvprintw(maxy - 2, 1, "Press Q twice to quit.");
+  }
+
+  RETURN_IF_MAXY(maxy, 3);
+
   attrset(COLOR_PAIR(2));
 
   /* Start time */
   struct tm *stime = gmtime(&start_time.tv_sec);
   mvprintw(3,  22, "%04d-%02d-%02d %02d:%02d:%02d UTC", 1900 + stime->tm_year, stime->tm_mon + 1,
       stime->tm_mday, stime->tm_hour, stime->tm_min, stime->tm_sec);
+  RETURN_IF_MAXY(maxy, 4);
 
   /* Elapsed time */
   struct timeval time_now;
@@ -829,6 +857,7 @@ static void draw_foreground(struct timeval start_time, double psuccess, uint32_t
   elapsed -= minutes * 60;
   int seconds = elapsed;
   mvprintw(4,  22, "%dd %02d:%02d:%02d", days, hours, minutes, seconds);
+  RETURN_IF_MAXY(maxy, 5);
 
   /* Finish time */
   if (g_thread_speeds != NULL) {
@@ -855,28 +884,44 @@ static void draw_foreground(struct timeval start_time, double psuccess, uint32_t
       }
     }
   }
+  RETURN_IF_MAXY(maxy, 6);
 
   if (psuccess >= 0.0 && psuccess <= 100.0) {
     mvprintw(6, 22, "%.1f%%", psuccess);
   }
+  RETURN_IF_MAXY(maxy, 8);
+
   mvprintw(8,  22, "%d", rounds);
+  RETURN_IF_MAXY(maxy, 9);
   pthread_mutex_lock(&g_next_lock);
   mvprintw(9,  22, "%06" PRIx32 " %06" PRIx32 " %016" PRIx64,
       g_current_pair.t1.pt, g_current_pair.t1.ct, g_current_pair.t1.tw); /* Tuple 1 */
+  if (10 > (maxy - 3)) {
+    pthread_mutex_unlock(&g_next_lock);
+    refresh();
+    return;
+  }
   mvprintw(10, 22, "%06" PRIx32 " %06" PRIx32 " %016" PRIx64,
       g_current_pair.t2.pt, g_current_pair.t2.ct, g_current_pair.t2.tw); /* Tuple 2 */
   pthread_mutex_unlock(&g_next_lock);
+  RETURN_IF_MAXY(maxy, 11);
   mvprintw(11, 22, "%d", get_keys_found());
+  if (maxy < 12) {
+    refresh();
+    return;
+  }
   uint64_t last_key = get_last_key_found();
   if (last_key < 0x100000000000000) {
     mvprintw(12, 22, "%014" PRIx64, get_last_key_found());
   }
+  RETURN_IF_MAXY(maxy, 14);
 
   pthread_mutex_lock(&g_next_lock);
   mvprintw(14, 8,  "%d of %d",
       rounds > 5 ? (g_next_pair == g_pairs.num_pairs ? g_pairs.num_pairs : g_next_pair + 1)   : 1,
       rounds > 5 ? g_pairs.num_pairs : 1);
   pthread_mutex_unlock(&g_next_lock);
+  RETURN_IF_MAXY(maxy, 15);
 
   pthread_mutex_lock(&g_next_lock);
   const char bar[] = "                                                      ";
@@ -885,14 +930,15 @@ static void draw_foreground(struct timeval start_time, double psuccess, uint32_t
   int bars = (int)(pct / pct_per_bar);
   pthread_mutex_unlock(&g_next_lock);
   mvprintw(15, 8,  "%.1f%%   ", pct); /* Key percentage. */
-  char status[STATUS_BUF_LEN];
-  get_status(status);
-  mvprintw(17, 22, "%s", status);
-
   mvprintw(15, 23, "%s", bar);
   attrset(COLOR_PAIR(3));
   mvprintw(15, 23, "%s", bar + strlen(bar) - bars);
+  RETURN_IF_MAXY(maxy, 17);
 
+  attrset(COLOR_PAIR(2));
+  char status[STATUS_BUF_LEN];
+  get_status(status);
+  mvprintw(17, 22, "%s", status);
   refresh();
 }
 
@@ -943,9 +989,17 @@ int main(int argc, char **argv) {
   /* Draw a screen if cracking more than 3 rounds. Three rounds and fewer are cracked so fast that
      drawing anything to the screen is unnecessary. */
   double psuccess = -1.0;
+  WINDOW *screen = NULL;
   if (worker_params.nrounds > 3) {
-    initscr();
+    screen = initscr();
+    if (screen == NULL) {
+      fprintf(stderr, "Error when initializing curses.\n");
+      fclose(infp);
+      fclose(g_outfp);
+      return 1;
+    }
     cbreak();
+    noecho();
     nodelay(stdscr, TRUE);
     if (has_colors()) {
       start_color();
@@ -954,8 +1008,8 @@ int main(int argc, char **argv) {
       init_pair(3, COLOR_GREEN, COLOR_GREEN);
     }
     curs_set(0);
-    draw_background();
-    draw_foreground(start_time, psuccess, worker_params.nrounds);
+    draw_background(screen);
+    draw_foreground(start_time, psuccess, worker_params.nrounds, screen, false);
     set_status("Reading input file... ");
     fflush(stdout);
   }
@@ -1239,8 +1293,12 @@ int main(int argc, char **argv) {
   /* Wait for completion and keep screen updated. */
   set_status("Performing key search.");
   uint32_t tcount;
+  uint32_t qcount = 0;
   do {
-    draw_foreground(start_time, psuccess, worker_params.nrounds);
+    if (qcount > 0) {
+      qcount--;
+    }
+    draw_foreground(start_time, psuccess, worker_params.nrounds, screen, qcount > 0);
     usleep(100000);
 
     pthread_mutex_lock(&g_threadcount_lock);
@@ -1250,10 +1308,14 @@ int main(int argc, char **argv) {
     do {
       keypress = getch();
       if (keypress == KEY_RESIZE) {
-        draw_background();
+        draw_background(screen);
       } else if (keypress == 'q' || keypress == 'Q') {
-        g_exit = true;
-        set_status("Exiting...");
+        if (qcount > 0) {
+          g_exit = true;
+          set_status("Exiting...");
+        } else {
+          qcount = 20;
+        }
       }
     } while (keypress != ERR);
   } while (tcount > 0);
