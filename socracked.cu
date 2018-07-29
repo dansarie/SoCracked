@@ -1,0 +1,1757 @@
+/* socracked.cu
+
+   Copyright (C) 2018 Marcus Dansarie <marcus@dansarie.se>
+
+   This program is free software: you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation, either version 3 of the License, or
+   (at your option) any later version.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program. If not, see <http://www.gnu.org/licenses/>. */
+
+#include <assert.h>
+#include <stdio.h>
+#include <stdint.h>
+#include <unistd.h>
+
+#include <cuda_profiler_api.h>
+
+#include "sodark.h"
+#include "socracked.h"
+#include "socracked_cuda.h"
+
+typedef struct {
+  int b0;
+  int b1;
+  int b2;
+  int b3;
+  int b4;
+  int b5;
+  int b6;
+  int b7;
+} eightbits;
+
+typedef struct {
+  eightbits a;
+  eightbits b;
+  eightbits c;
+} twentyfourbits;
+
+/* Device constant memory. */
+
+__constant__ int pt1_c[24];
+__constant__ int pt2_c[24];
+__constant__ int ct1_c[24];
+__constant__ int tw1_c[64];
+__constant__ int tw2_c[64];
+__constant__ int key_c[24];
+__constant__ int key3_c[256];
+
+/* Device functions */
+
+/* Macro for using the CUDA lop3.b32 instruction.
+   a - output variable
+   b - input 1
+   c - input 2
+   d - input 3
+   e - lookup table. */
+#define LUT(a,b,c,d,e) asm("lop3.b32 %0, %1, %2, %3, "#e";" : "=r"(a): "r"(b), "r"(c), "r"(d));
+
+/* The functions s0 to s7 calculate one output bit each of the SoDark S-box. */
+
+__device__ __forceinline__ int s0(eightbits in) {
+  int var8;  LUT(var8,  in.b7, in.b5, in.b6, 0xce);
+  int var9;  LUT(var9,  in.b7, in.b6, in.b5, 0x94);
+  int var13; LUT(var13, in.b3, in.b4, in.b7, 0xe7);
+  int var22; LUT(var22, in.b3, in.b4, in.b5, 0x78);
+  int var27; LUT(var27, in.b3, in.b4, in.b5, 0x71);
+  int var30; LUT(var30, in.b1, in.b3, var9,  0xeb);
+  int var11; LUT(var11, in.b1, in.b7, var9,  0xe7);
+  int var15; LUT(var15, var11, in.b6, in.b5, 0x7d);
+  int var10; LUT(var10, in.b1, var8,  var9,  0xac);
+  int var33; LUT(var33, var27, var15, var10, 0x78);
+  int var12; LUT(var12, in.b3, var10, var11, 0xac);
+  int var14; LUT(var14, var13, var9,  var12, 0x78);
+  int var19; LUT(var19, var14, in.b5, in.b1, 0x9a);
+  int var16; LUT(var16, in.b1, var14, var15, 0xac);
+  int var37; LUT(var37, var9,  var14, var16, 0xf7);
+  int var17; LUT(var17, in.b4, var12, var16, 0xac);
+  int var18; LUT(var18, in.b7, var16, in.b1, 0xb8);
+  int var20; LUT(var20, in.b3, var18, var19, 0xac);
+  int var34; LUT(var34, var20, in.b6, var19, 0x8b);
+  int var35; LUT(var35, in.b7, var33, var34, 0xac);
+  int var29; LUT(var29, var10, var18, var22, 0x85);
+  int var21; LUT(var21, var11, var16, var17, 0x6b);
+  int var23; LUT(var23, var22, var21, var20, 0x09);
+  int var31; LUT(var31, var30, var29, var23, 0xcb);
+  int var24; LUT(var24, in.b6, var20, var23, 0xac);
+  int var25; LUT(var25, in.b0, var17, var24, 0xac);
+  int var26; LUT(var26, in.b6, var16, var23, 0x9c);
+  int var28; LUT(var28, var27, var26, var25, 0x93);
+  int var32; LUT(var32, in.b7, var28, var31, 0xac);
+  int var36; LUT(var36, var19, var30, var32, 0x09);
+  int var38; LUT(var38, var37, var36, var33, 0x9c);
+  int var39; LUT(var39, in.b4, var35, var38, 0xac);
+  int var40; LUT(var40, in.b0, var32, var39, 0xac);
+  int out0; LUT(out0, in.b2, var25, var40, 0xac);
+  return out0;
+}
+
+__device__ __forceinline__ int s1(eightbits in) {
+  int var8;  LUT(var8,  in.b7, in.b4, in.b1, 0x59);
+  int var10; LUT(var10, in.b0, in.b1, in.b4, 0x37);
+  int var14; LUT(var14, in.b2, in.b4, in.b7, 0xda);
+  int var17; LUT(var17, in.b0, in.b2, in.b5, 0xd5);
+  int var28; LUT(var28, in.b1, in.b6, in.b7, 0x29);
+  int var9;  LUT(var9,  in.b5, in.b4, var8,  0xac);
+  int var19; LUT(var19, in.b0, in.b2, var8,  0x3e);
+  int var23; LUT(var23, in.b0, in.b2, var8,  0x64);
+  int var31; LUT(var31, in.b4, in.b6, var8,  0x9d);
+  int var11; LUT(var11, var10, in.b5, in.b7, 0x9c);
+  int var13; LUT(var13, var8,  var9,  var11, 0xe8);
+  int var12; LUT(var12, in.b2, var9,  var11, 0xac);
+  int var20; LUT(var20, var19, var11, var12, 0x7a);
+  int var15; LUT(var15, var14, var13, var12, 0x86);
+  int var27; LUT(var27, var10, var11, var12, 0x2c);
+  int var29; LUT(var29, var28, var27, var17, 0xa9);
+  int var16; LUT(var16, in.b0, var12, var15, 0xac);
+  int var22; LUT(var22, var10, var12, var17, 0xf7);
+  int var18; LUT(var18, var17, var13, var16, 0xe7);
+  int var21; LUT(var21, in.b7, var18, var20, 0xac);
+  int var24; LUT(var24, var23, var22, var18, 0x4c);
+  int var30; LUT(var30, var14, var15, var18, 0x3e);
+  int var32; LUT(var32, var31, var30, var22, 0x3a);
+  int var33; LUT(var33, in.b0, var29, var32, 0xac);
+  int var38; LUT(var38, var31, var8,  var33, 0x73);
+  int var34; LUT(var34, var20, var31, var18, 0x92);
+  int var25; LUT(var25, in.b4, var21, var24, 0xac);
+  int var26; LUT(var26, in.b6, var16, var25, 0xac);
+  int var35; LUT(var35, var16, var18, var26, 0xf1);
+  int var36; LUT(var36, var35, var28, var33, 0x9e);
+  int var37; LUT(var37, in.b6, var34, var36, 0xac);
+  int var39; LUT(var39, in.b4, var37, var38, 0xac);
+  int var40; LUT(var40, in.b2, var33, var39, 0xac);
+  int out1;  LUT(out1,  in.b3, var26, var40, 0xac);
+  return out1;
+}
+
+__device__ __forceinline__ int s2(eightbits in) {
+  int var8;  LUT(var8,  in.b4, in.b5, in.b6, 0xd9);
+  int var9;  LUT(var9,  in.b4, in.b5, in.b6, 0xa5);
+  int var20; LUT(var20, in.b4, in.b5, in.b6, 0xd6);
+  int var11; LUT(var11, in.b3, in.b5, in.b6, 0xb4);
+  int var14; LUT(var14, in.b1, in.b4, in.b6, 0x41);
+  int var23; LUT(var23, in.b1, in.b3, in.b5, 0x2f);
+  int var10; LUT(var10, in.b3, var8,  var9,  0xac);
+  int var16; LUT(var16, var10, in.b6, in.b5, 0x06);
+  int var12; LUT(var12, var11, var8,  var10, 0x4d);
+  int var35; LUT(var35, in.b2, var9,  var11, 0x78);
+  int var22; LUT(var22, var8,  var12, var14, 0x1f);
+  int var13; LUT(var13, in.b1, var10, var12, 0xac);
+  int var30; LUT(var30, var16, var13, in.b2, 0x39);
+  int var34; LUT(var34, var14, var16, var30, 0x16);
+  int var19; LUT(var19, var8,  var9,  var13, 0x87);
+  int var15; LUT(var15, var14, var9,  var11, 0x49);
+  int var21; LUT(var21, var20, var19, var15, 0x72);
+  int var17; LUT(var17, in.b3, var15, var16, 0xac);
+  int var28; LUT(var28, var11, var17, var16, 0xa3);
+  int var18; LUT(var18, in.b2, var13, var17, 0xac);
+  int var24; LUT(var24, var23, var22, var17, 0xcb);
+  int var38; LUT(var38, in.b3, in.b5, var17, 0xb3);
+  int var25; LUT(var25, in.b2, var21, var24, 0xac);
+  int var26; LUT(var26, in.b0, var18, var25, 0xac);
+  int var27; LUT(var27, var24, var15, in.b4, 0x95);
+  int var29; LUT(var29, in.b2, var27, var28, 0xac);
+  int var37; LUT(var37, var28, var29, var35, 0x4a);
+  int var31; LUT(var31, var22, var29, var25, 0x97);
+  int var32; LUT(var32, in.b5, var30, var31, 0xac);
+  int var36; LUT(var36, var35, var34, var31, 0xc7);
+  int var39; LUT(var39, var38, var37, var36, 0x29);
+  int var40; LUT(var40, in.b1, var36, var39, 0xac);
+  int var33; LUT(var33, in.b1, var29, var32, 0xac);
+  int var41; LUT(var41, in.b0, var33, var40, 0xac);
+  int out2;  LUT(out2,  in.b7, var26, var41, 0xac);
+  return out2;
+}
+
+__device__ __forceinline__ int s3(eightbits in) {
+  int var8;  LUT(var8,  in.b7, in.b2, in.b5, 0x85);
+  int var9;  LUT(var9,  in.b7, in.b2, in.b5, 0xe8);
+  int var13; LUT(var13, in.b3, in.b5, in.b7, 0xe6);
+  int var18; LUT(var18, in.b3, in.b5, in.b2, 0xbd);
+  int var35; LUT(var35, in.b0, in.b2, in.b3, 0xa5);
+  int var38; LUT(var38, in.b1, in.b3, in.b7, 0x28);
+  int var19; LUT(var19, in.b3, in.b7, var8,  0xa6);
+  int var28; LUT(var28, in.b0, in.b2, var8,  0xd3);
+  int var10; LUT(var10, in.b1, var8,  var9,  0xac);
+  int var15; LUT(var15, in.b7, var10, in.b5, 0x86);
+  int var11; LUT(var11, in.b2, in.b1, var10, 0xc9);
+  int var12; LUT(var12, in.b3, var10, var11, 0xac);
+  int var14; LUT(var14, var13, var10, var12, 0xd4);
+  int var16; LUT(var16, in.b2, var14, var15, 0xac);
+  int var17; LUT(var17, in.b0, var12, var16, 0xac);
+  int var22; LUT(var22, var17, var11, var15, 0x91);
+  int var20; LUT(var20, var19, var17, var18, 0x3d);
+  int var34; LUT(var34, var10, var20, var28, 0x48);
+  int var21; LUT(var21, in.b1, var18, var20, 0xac);
+  int var23; LUT(var23, var19, var21, in.b1, 0xc9);
+  int var24; LUT(var24, in.b3, var22, var23, 0xac);
+  int var27; LUT(var27, var9,  var11, var23, 0xb9);
+  int var30; LUT(var30, in.b1, var27, in.b0, 0x6e);
+  int var29; LUT(var29, var28, var27, var24, 0x4b);
+  int var37; LUT(var37, var21, var27, var29, 0x2b);
+  int var25; LUT(var25, in.b0, var21, var24, 0xac);
+  int var26; LUT(var26, in.b6, var17, var25, 0xac);
+  int var31; LUT(var31, var10, var22, var25, 0x09);
+  int var32; LUT(var32, in.b7, var30, var31, 0xac);
+  int var33; LUT(var33, in.b3, var29, var32, 0xac);
+  int var36; LUT(var36, var35, var34, var33, 0x16);
+  int var39; LUT(var39, var38, var37, var36, 0x29);
+  int var40; LUT(var40, in.b5, var36, var39, 0xac);
+  int var41; LUT(var41, in.b6, var33, var40, 0xac);
+  int out3;  LUT(out3,  in.b4, var26, var41, 0xac);
+  return out3;
+}
+
+__device__ __forceinline__ int s4(eightbits in) {
+  int var8;  LUT(var8,  in.b5, in.b7, in.b6, 0x45);
+  int var13; LUT(var13, in.b1, in.b2, in.b7, 0x6c);
+  int var18; LUT(var18, in.b3, in.b5, in.b6, 0x99);
+  int var36; LUT(var36, in.b4, in.b6, in.b7, 0x49);
+  int var20; LUT(var20, in.b2, in.b5, in.b7, 0x96);
+  int var9;  LUT(var9,  var8,  in.b5, in.b7, 0x8e);
+  int var39; LUT(var39, in.b2, in.b4, var8,  0x34);
+  int var15; LUT(var15, var13, in.b2, in.b5, 0xec);
+  int var10; LUT(var10, in.b2, var8,  var9,  0xac);
+  int var32; LUT(var32, in.b1, in.b6, var10, 0xd9);
+  int var11; LUT(var11, var9,  in.b6, in.b2, 0x17);
+  int var19; LUT(var19, var18, in.b7, var13, 0xd0);
+  int var21; LUT(var21, var20, var9,  var19, 0x05);
+  int var22; LUT(var22, in.b4, var19, var21, 0xac);
+  int var38; LUT(var38, var15, var18, var22, 0x4d);
+  int var12; LUT(var12, in.b1, var10, var11, 0xac);
+  int var31; LUT(var31, var12, var20, var22, 0x1e);
+  int var14; LUT(var14, var13, var8,  var12, 0xa3);
+  int var23; LUT(var23, var10, var9,  var14, 0xa9);
+  int var24; LUT(var24, var12, var18, var14, 0x9e);
+  int var40; LUT(var40, var39, var38, var24, 0x27);
+  int var16; LUT(var16, in.b6, var14, var15, 0xac);
+  int var17; LUT(var17, in.b4, var12, var16, 0xac);
+  int var25; LUT(var25, in.b4, var23, var24, 0xac);
+  int var26; LUT(var26, in.b1, var22, var25, 0xac);
+  int var35; LUT(var35, var15, var26, var31, 0x07);
+  int var29; LUT(var29, var17, var25, var20, 0x29);
+  int var33; LUT(var33, var32, var31, var29, 0x3e);
+  int var27; LUT(var27, in.b0, var17, var26, 0xac);
+  int var28; LUT(var28, var16, var26, var21, 0x96);
+  int var30; LUT(var30, in.b2, var28, var29, 0xac);
+  int var34; LUT(var34, in.b4, var30, var33, 0xac);
+  int var37; LUT(var37, var36, var35, var34, 0xbc);
+  int var41; LUT(var41, in.b1, var37, var40, 0xac);
+  int var42; LUT(var42, in.b0, var34, var41, 0xac);
+  int out4;  LUT(out4,  in.b3, var27, var42, 0xac);
+  return out4;
+}
+
+__device__ __forceinline__ int s5(eightbits in) {
+  int var8;  LUT(var8,  in.b7, in.b6, in.b5, 0x74);
+  int var10; LUT(var10, in.b5, in.b6, in.b7, 0x85);
+  int var11; LUT(var11, in.b0, in.b1, in.b4, 0x95);
+  int var14; LUT(var14, in.b2, in.b5, in.b6, 0x1a);
+  int var20; LUT(var20, in.b2, in.b4, in.b5, 0x18);
+  int var23; LUT(var23, in.b2, in.b5, in.b6, 0x06);
+  int var9;  LUT(var9,  in.b4, var8,  in.b6, 0xac);
+  int var33; LUT(var33, var9,  in.b5, var20, 0xeb);
+  int var12; LUT(var12, var11, var10, var8,  0x9e);
+  int var19; LUT(var19, in.b6, var8,  var11, 0x99);
+  int var21; LUT(var21, var20, var19, var14, 0x81);
+  int var13; LUT(var13, in.b2, var9,  var12, 0xac);
+  int var15; LUT(var15, var14, var12, var13, 0x78);
+  int var29; LUT(var29, in.b6, var10, var13, 0xf4);
+  int var16; LUT(var16, in.b2, var12, var10, 0xac);
+  int var17; LUT(var17, in.b4, var15, var16, 0xac);
+  int var18; LUT(var18, in.b1, var13, var17, 0xac);
+  int var22; LUT(var22, var8,  var10, var17, 0xb8);
+  int var27; LUT(var27, var22, in.b0, var10, 0x58);
+  int var24; LUT(var24, var23, var22, var21, 0x36);
+  int var30; LUT(var30, var29, var18, var24, 0xa1);
+  int var25; LUT(var25, in.b1, var21, var24, 0xac);
+  int var37; LUT(var37, var13, var15, var24, 0x72);
+  int var26; LUT(var26, in.b0, var18, var25, 0xac);
+  int var34; LUT(var34, var26, in.b2, var10, 0x6d);
+  int var35; LUT(var35, in.b6, var33, var34, 0xac);
+  int var28; LUT(var28, in.b6, var24, var22, 0x26);
+  int var31; LUT(var31, in.b0, var28, var30, 0xac);
+  int var32; LUT(var32, in.b2, var27, var31, 0xac);
+  int var36; LUT(var36, var29, var32, var34, 0xd6);
+  int var38; LUT(var38, var37, var36, var35, 0xd4);
+  int var39; LUT(var39, in.b0, var35, var38, 0xac);
+  int var40; LUT(var40, in.b1, var32, var39, 0xac);
+  int out5;  LUT(out5,  in.b3, var26, var40, 0xac);
+  return out5;
+}
+
+__device__ __forceinline__ int s6(eightbits in) {
+  int var8;  LUT(var8,  in.b1, in.b6, in.b2, 0x3b);
+  int var13; LUT(var13, in.b1, in.b2, in.b6, 0xe7);
+  int var16; LUT(var16, in.b1, in.b2, in.b6, 0x4a);
+  int var21; LUT(var21, in.b0, in.b2, in.b7, 0x0a);
+  int var26; LUT(var26, in.b1, in.b5, in.b6, 0x89);
+  int var29; LUT(var29, in.b0, in.b5, in.b7, 0x16);
+  int var9;  LUT(var9,  in.b0, in.b6, var8,  0xac);
+  int var10; LUT(var10, in.b1, var9,  in.b2, 0x61);
+  int var17; LUT(var17, var16, in.b7, var13, 0xd1);
+  int var18; LUT(var18, in.b1, var16, var17, 0xc5);
+  int var19; LUT(var19, in.b0, var17, var18, 0xac);
+  int var25; LUT(var25, in.b7, var10, var18, 0x65);
+  int var36; LUT(var36, in.b1, var19, var25, 0x97);
+  int var33; LUT(var33, in.b7, var16, var26, 0x64);
+  int var11; LUT(var11, in.b7, var9,  var10, 0xac);
+  int var12; LUT(var12, in.b7, var8,  var10, 0x34);
+  int var14; LUT(var14, var13, var12, var11, 0xc7);
+  int var15; LUT(var15, in.b4, var11, var14, 0xac);
+  int var28; LUT(var28, var8,  var11, var18, 0x15);
+  int var37; LUT(var37, in.b0, var28, var11, 0x9a);
+  int var38; LUT(var38, in.b5, var36, var37, 0xac);
+  int var20; LUT(var20, var10, var12, var17, 0x7c);
+  int var22; LUT(var22, var21, var20, var19, 0x3e);
+  int var23; LUT(var23, in.b4, var19, var22, 0xac);
+  int var24; LUT(var24, in.b5, var15, var23, 0xac);
+  int var27; LUT(var27, var26, var25, var23, 0x2b);
+  int var30; LUT(var30, var29, var28, var27, 0xc2);
+  int var31; LUT(var31, in.b4, var27, var30, 0xac);
+  int var34; LUT(var34, var33, var27, var29, 0xbe);
+  int var32; LUT(var32, in.b7, var28, var30, 0x7e);
+  int var35; LUT(var35, in.b0, var32, var34, 0xac);
+  int var39; LUT(var39, in.b4, var35, var38, 0xac);
+  int var40; LUT(var40, in.b2, var31, var39, 0xac);
+  int out6;  LUT(out6,  in.b3, var24, var40, 0xac);
+  return out6;
+}
+
+__device__ __forceinline__ int s7(eightbits in) {
+  int var8;  LUT(var8,  in.b7, in.b4, in.b3, 0x93);
+  int var11; LUT(var11, in.b1, in.b3, in.b4, 0x96);
+  int var15; LUT(var15, in.b1, in.b3, in.b5, 0x17);
+  int var19; LUT(var19, in.b1, in.b3, in.b5, 0x84);
+  int var22; LUT(var22, in.b1, in.b3, in.b7, 0xd5);
+  int var34; LUT(var34, in.b2, in.b4, in.b5, 0xd8);
+  int var9;  LUT(var9,  in.b7, in.b3, var8,  0xa4);
+  int var10; LUT(var10, in.b1, var8,  var9,  0xac);
+  int var12; LUT(var12, var11, in.b7, var8,  0x6c);
+  int var13; LUT(var13, in.b5, var10, var12, 0xac);
+  int var29; LUT(var29, var11, var12, in.b2, 0x97);
+  int var36; LUT(var36, in.b5, var22, var8,  0xc5);
+  int var21; LUT(var21, var9,  var11, var13, 0xb4);
+  int var23; LUT(var23, var22, var21, var19, 0xd6);
+  int var14; LUT(var14, var8,  var9,  var12, 0x76);
+  int var18; LUT(var18, var8,  var11, var15, 0x58);
+  int var16; LUT(var16, var15, var14, var13, 0xc8);
+  int var17; LUT(var17, in.b2, var13, var16, 0xac);
+  int var27; LUT(var27, var17, in.b4, var14, 0x85);
+  int var20; LUT(var20, var19, var18, var16, 0xf1);
+  int var24; LUT(var24, in.b2, var20, var23, 0xac);
+  int var25; LUT(var25, in.b6, var17, var24, 0xac);
+  int var30; LUT(var30, in.b1, var25, in.b2, 0x96);
+  int var33; LUT(var33, var8,  var11, var25, 0x36);
+  int var35; LUT(var35, var34, var33, var29, 0xe4);
+  int var37; LUT(var37, var8,  var33, var19, 0x98);
+  int var38; LUT(var38, in.b2, var36, var37, 0xac);
+  int var39; LUT(var39, in.b3, var35, var38, 0xac);
+  int var31; LUT(var31, in.b4, var29, var30, 0xac);
+  int var26; LUT(var26, var11, var24, var16, 0x2a);
+  int var28; LUT(var28, in.b7, var26, var27, 0xac);
+  int var32; LUT(var32, in.b5, var28, var31, 0xac);
+  int var40; LUT(var40, in.b6, var32, var39, 0xac);
+  int out7;  LUT(out7,  in.b0, var25, var40, 0xac);
+  return out7;
+}
+
+__device__ __forceinline__ twentyfourbits encrypt_round(twentyfourbits bits, int round,
+    volatile const int * __restrict key_hi) {
+
+  volatile int bidx = blockIdx.x;
+  volatile int tidx = threadIdx.x;
+
+  eightbits cur;
+
+  switch (round) {
+    case 2:
+      cur.b7 = (0 - ((bidx >> 16) & 1)) ^ tw1_c[39] ^ bits.b.b7 ^ bits.a.b7;
+      cur.b6 = (0 - ((bidx >> 15) & 1)) ^ tw1_c[38] ^ bits.b.b6 ^ bits.a.b6;
+      cur.b5 = (0 - ((bidx >> 14) & 1)) ^ tw1_c[37] ^ bits.b.b5 ^ bits.a.b5;
+      cur.b4 = (0 - ((bidx >> 13) & 1)) ^ tw1_c[36] ^ bits.b.b4 ^ bits.a.b4;
+      cur.b3 = (0 - ((bidx >> 12) & 1)) ^ tw1_c[35] ^ bits.b.b3 ^ bits.a.b3;
+      cur.b2 = (0 - ((bidx >> 11) & 1)) ^ tw1_c[34] ^ bits.b.b2 ^ bits.a.b2;
+      cur.b1 = (0 - ((bidx >> 10) & 1)) ^ tw1_c[33] ^ bits.b.b1 ^ bits.a.b1;
+      cur.b0 = (0 - ((bidx >> 9)  & 1)) ^ tw1_c[32] ^ bits.b.b0 ^ bits.a.b0;
+      break;
+    case 3:
+      cur.b7 = (0 - ((tidx >> 2)  & 1)) ^ tw1_c[15] ^ bits.b.b7 ^ bits.a.b7;
+      cur.b6 = (0 - ((tidx >> 1)  & 1)) ^ tw1_c[14] ^ bits.b.b6 ^ bits.a.b6;
+      cur.b5 = (0 -  (tidx        & 1)) ^ tw1_c[13] ^ bits.b.b5 ^ bits.a.b5;
+      cur.b4 = 0xffff0000               ^ tw1_c[12] ^ bits.b.b4 ^ bits.a.b4;
+      cur.b3 = 0xff00ff00               ^ tw1_c[11] ^ bits.b.b3 ^ bits.a.b3;
+      cur.b2 = 0xf0f0f0f0               ^ tw1_c[10] ^ bits.b.b2 ^ bits.a.b2;
+      cur.b1 = 0xcccccccc               ^ tw1_c[9]  ^ bits.b.b1 ^ bits.a.b1;
+      cur.b0 = 0xaaaaaaaa               ^ tw1_c[8]  ^ bits.b.b0 ^ bits.a.b0;
+      break;
+    case 4:
+      cur.b7 = key_hi[7]                ^ tw1_c[55] ^ bits.b.b7 ^ bits.a.b7;
+      cur.b6 = key_hi[6]                ^ tw1_c[54] ^ bits.b.b6 ^ bits.a.b6;
+      cur.b5 = key_hi[5]                ^ tw1_c[53] ^ bits.b.b5 ^ bits.a.b5;
+      cur.b4 = key_hi[4]                ^ tw1_c[52] ^ bits.b.b4 ^ bits.a.b4;
+      cur.b3 = key_hi[3]                ^ tw1_c[51] ^ bits.b.b3 ^ bits.a.b3;
+      cur.b2 = key_hi[2]                ^ tw1_c[50] ^ bits.b.b2 ^ bits.a.b2;
+      cur.b1 = key_hi[1]                ^ tw1_c[49] ^ bits.b.b1 ^ bits.a.b1;
+      cur.b0 = key_hi[0]                ^ tw1_c[48] ^ bits.b.b0 ^ bits.a.b0;
+      break;
+    case 5:
+      cur.b7 = (0 -  (bidx        & 1)) ^ tw1_c[31] ^ bits.b.b7 ^ bits.a.b7;
+      cur.b6 = (0 - ((tidx >> 9)  & 1)) ^ tw1_c[30] ^ bits.b.b6 ^ bits.a.b6;
+      cur.b5 = (0 - ((tidx >> 8)  & 1)) ^ tw1_c[29] ^ bits.b.b5 ^ bits.a.b5;
+      cur.b4 = (0 - ((tidx >> 7)  & 1)) ^ tw1_c[28] ^ bits.b.b4 ^ bits.a.b4;
+      cur.b3 = (0 - ((tidx >> 6)  & 1)) ^ tw1_c[27] ^ bits.b.b3 ^ bits.a.b3;
+      cur.b2 = (0 - ((tidx >> 5)  & 1)) ^ tw1_c[26] ^ bits.b.b2 ^ bits.a.b2;
+      cur.b1 = (0 - ((tidx >> 4)  & 1)) ^ tw1_c[25] ^ bits.b.b1 ^ bits.a.b1;
+      cur.b0 = (0 - ((tidx >> 3)  & 1)) ^ tw1_c[24] ^ bits.b.b0 ^ bits.a.b0;
+      break;
+    case 6:
+      cur.b7 = key_hi[15]               ^ tw1_c[7]  ^ bits.b.b7 ^ bits.a.b7;
+      cur.b6 = key_hi[14]               ^ tw1_c[6]  ^ bits.b.b6 ^ bits.a.b6;
+      cur.b5 = key_hi[13]               ^ tw1_c[5]  ^ bits.b.b5 ^ bits.a.b5;
+      cur.b4 = key_hi[12]               ^ tw1_c[4]  ^ bits.b.b4 ^ bits.a.b4;
+      cur.b3 = key_hi[11]               ^ tw1_c[3]  ^ bits.b.b3 ^ bits.a.b3;
+      cur.b2 = key_hi[10]               ^ tw1_c[2]  ^ bits.b.b2 ^ bits.a.b2;
+      cur.b1 = key_hi[9]                ^ tw1_c[1]  ^ bits.b.b1 ^ bits.a.b1;
+      cur.b0 = key_hi[8]                ^ tw1_c[0]  ^ bits.b.b0 ^ bits.a.b0;
+      break;
+    case 7:
+      cur.b7 = (0 - ((bidx >> 8)  & 1)) ^ tw1_c[47] ^ bits.b.b7 ^ bits.a.b7;
+      cur.b6 = (0 - ((bidx >> 7)  & 1)) ^ tw1_c[46] ^ bits.b.b6 ^ bits.a.b6;
+      cur.b5 = (0 - ((bidx >> 6)  & 1)) ^ tw1_c[45] ^ bits.b.b5 ^ bits.a.b5;
+      cur.b4 = (0 - ((bidx >> 5)  & 1)) ^ tw1_c[44] ^ bits.b.b4 ^ bits.a.b4;
+      cur.b3 = (0 - ((bidx >> 4)  & 1)) ^ tw1_c[43] ^ bits.b.b3 ^ bits.a.b3;
+      cur.b2 = (0 - ((bidx >> 3)  & 1)) ^ tw1_c[42] ^ bits.b.b2 ^ bits.a.b2;
+      cur.b1 = (0 - ((bidx >> 2)  & 1)) ^ tw1_c[41] ^ bits.b.b1 ^ bits.a.b1;
+      cur.b0 = (0 - ((bidx >> 1)  & 1)) ^ tw1_c[40] ^ bits.b.b0 ^ bits.a.b0;
+      break;
+  }
+
+  bits.a.b0 = s0(cur);
+  bits.a.b1 = s1(cur);
+  bits.a.b2 = s2(cur);
+  bits.a.b3 = s3(cur);
+  bits.a.b4 = s4(cur);
+  bits.a.b5 = s5(cur);
+  bits.a.b6 = s6(cur);
+  bits.a.b7 = s7(cur);
+
+  switch (round) {
+    case 2:
+      cur.b7 = (0 - ((bidx >> 8)  & 1)) ^ tw1_c[31] ^ bits.b.b7 ^ bits.c.b7;
+      cur.b6 = (0 - ((bidx >> 7)  & 1)) ^ tw1_c[30] ^ bits.b.b6 ^ bits.c.b6;
+      cur.b5 = (0 - ((bidx >> 6)  & 1)) ^ tw1_c[29] ^ bits.b.b5 ^ bits.c.b5;
+      cur.b4 = (0 - ((bidx >> 5)  & 1)) ^ tw1_c[28] ^ bits.b.b4 ^ bits.c.b4;
+      cur.b3 = (0 - ((bidx >> 4)  & 1)) ^ tw1_c[27] ^ bits.b.b3 ^ bits.c.b3;
+      cur.b2 = (0 - ((bidx >> 3)  & 1)) ^ tw1_c[26] ^ bits.b.b2 ^ bits.c.b2;
+      cur.b1 = (0 - ((bidx >> 2)  & 1)) ^ tw1_c[25] ^ bits.b.b1 ^ bits.c.b1;
+      cur.b0 = (0 - ((bidx >> 1)  & 1)) ^ tw1_c[24] ^ bits.b.b0 ^ bits.c.b0;
+      break;
+    case 3:
+      cur.b7 = key_hi[23]               ^ tw1_c[7]  ^ bits.b.b7 ^ bits.c.b7;
+      cur.b6 = key_hi[22]               ^ tw1_c[6]  ^ bits.b.b6 ^ bits.c.b6;
+      cur.b5 = key_hi[21]               ^ tw1_c[5]  ^ bits.b.b5 ^ bits.c.b5;
+      cur.b4 = key_hi[20]               ^ tw1_c[4]  ^ bits.b.b4 ^ bits.c.b4;
+      cur.b3 = key_hi[19]               ^ tw1_c[3]  ^ bits.b.b3 ^ bits.c.b3;
+      cur.b2 = key_hi[18]               ^ tw1_c[2]  ^ bits.b.b2 ^ bits.c.b2;
+      cur.b1 = key_hi[17]               ^ tw1_c[1]  ^ bits.b.b1 ^ bits.c.b1;
+      cur.b0 = key_hi[16]               ^ tw1_c[0]  ^ bits.b.b0 ^ bits.c.b0;
+      break;
+    case 4:
+      cur.b7 = (0 - ((bidx >> 16) & 1)) ^ tw1_c[47] ^ bits.b.b7 ^ bits.c.b7;
+      cur.b6 = (0 - ((bidx >> 15) & 1)) ^ tw1_c[46] ^ bits.b.b6 ^ bits.c.b6;
+      cur.b5 = (0 - ((bidx >> 14) & 1)) ^ tw1_c[45] ^ bits.b.b5 ^ bits.c.b5;
+      cur.b4 = (0 - ((bidx >> 13) & 1)) ^ tw1_c[44] ^ bits.b.b4 ^ bits.c.b4;
+      cur.b3 = (0 - ((bidx >> 12) & 1)) ^ tw1_c[43] ^ bits.b.b3 ^ bits.c.b3;
+      cur.b2 = (0 - ((bidx >> 11) & 1)) ^ tw1_c[42] ^ bits.b.b2 ^ bits.c.b2;
+      cur.b1 = (0 - ((bidx >> 10) & 1)) ^ tw1_c[41] ^ bits.b.b1 ^ bits.c.b1;
+      cur.b0 = (0 - ((bidx >> 9)  & 1)) ^ tw1_c[40] ^ bits.b.b0 ^ bits.c.b0;
+      break;
+    case 5:
+      cur.b7 = (0 - ((tidx >> 2)  & 1)) ^ tw1_c[23] ^ bits.b.b7 ^ bits.c.b7;
+      cur.b6 = (0 - ((tidx >> 1)  & 1)) ^ tw1_c[22] ^ bits.b.b6 ^ bits.c.b6;
+      cur.b5 = (0 -  (tidx        & 1)) ^ tw1_c[21] ^ bits.b.b5 ^ bits.c.b5;
+      cur.b4 = 0xffff0000               ^ tw1_c[20] ^ bits.b.b4 ^ bits.c.b4;
+      cur.b3 = 0xff00ff00               ^ tw1_c[19] ^ bits.b.b3 ^ bits.c.b3;
+      cur.b2 = 0xf0f0f0f0               ^ tw1_c[18] ^ bits.b.b2 ^ bits.c.b2;
+      cur.b1 = 0xcccccccc               ^ tw1_c[17] ^ bits.b.b1 ^ bits.c.b1;
+      cur.b0 = 0xaaaaaaaa               ^ tw1_c[16] ^ bits.b.b0 ^ bits.c.b0;
+      break;
+    case 6:
+      cur.b7 = key_hi[7]                ^ tw1_c[63] ^ bits.b.b7 ^ bits.c.b7;
+      cur.b6 = key_hi[6]                ^ tw1_c[62] ^ bits.b.b6 ^ bits.c.b6;
+      cur.b5 = key_hi[5]                ^ tw1_c[61] ^ bits.b.b5 ^ bits.c.b5;
+      cur.b4 = key_hi[4]                ^ tw1_c[60] ^ bits.b.b4 ^ bits.c.b4;
+      cur.b3 = key_hi[3]                ^ tw1_c[59] ^ bits.b.b3 ^ bits.c.b3;
+      cur.b2 = key_hi[2]                ^ tw1_c[58] ^ bits.b.b2 ^ bits.c.b2;
+      cur.b1 = key_hi[1]                ^ tw1_c[57] ^ bits.b.b1 ^ bits.c.b1;
+      cur.b0 = key_hi[0]                ^ tw1_c[56] ^ bits.b.b0 ^ bits.c.b0;
+      break;
+    case 7:
+      cur.b7 = (0 -  (bidx        & 1)) ^ tw1_c[39] ^ bits.b.b7 ^ bits.c.b7;
+      cur.b6 = (0 - ((tidx >> 9)  & 1)) ^ tw1_c[38] ^ bits.b.b6 ^ bits.c.b6;
+      cur.b5 = (0 - ((tidx >> 8)  & 1)) ^ tw1_c[37] ^ bits.b.b5 ^ bits.c.b5;
+      cur.b4 = (0 - ((tidx >> 7)  & 1)) ^ tw1_c[36] ^ bits.b.b4 ^ bits.c.b4;
+      cur.b3 = (0 - ((tidx >> 6)  & 1)) ^ tw1_c[35] ^ bits.b.b3 ^ bits.c.b3;
+      cur.b2 = (0 - ((tidx >> 5)  & 1)) ^ tw1_c[34] ^ bits.b.b2 ^ bits.c.b2;
+      cur.b1 = (0 - ((tidx >> 4)  & 1)) ^ tw1_c[33] ^ bits.b.b1 ^ bits.c.b1;
+      cur.b0 = (0 - ((tidx >> 3)  & 1)) ^ tw1_c[32] ^ bits.b.b0 ^ bits.c.b0;
+      break;
+  }
+
+  bits.c.b0 = s0(cur);
+  bits.c.b1 = s1(cur);
+  bits.c.b2 = s2(cur);
+  bits.c.b3 = s3(cur);
+  bits.c.b4 = s4(cur);
+  bits.c.b5 = s5(cur);
+  bits.c.b6 = s6(cur);
+  bits.c.b7 = s7(cur);
+
+  switch (round) {
+    case 2:
+      cur.b7 = (0 -  (bidx        & 1)) ^ tw1_c[23] ^ bits.a.b7 ^ bits.b.b7 ^ bits.c.b7;
+      cur.b6 = (0 - ((tidx >> 9)  & 1)) ^ tw1_c[22] ^ bits.a.b6 ^ bits.b.b6 ^ bits.c.b6;
+      cur.b5 = (0 - ((tidx >> 8)  & 1)) ^ tw1_c[21] ^ bits.a.b5 ^ bits.b.b5 ^ bits.c.b5;
+      cur.b4 = (0 - ((tidx >> 7)  & 1)) ^ tw1_c[20] ^ bits.a.b4 ^ bits.b.b4 ^ bits.c.b4;
+      cur.b3 = (0 - ((tidx >> 6)  & 1)) ^ tw1_c[19] ^ bits.a.b3 ^ bits.b.b3 ^ bits.c.b3;
+      cur.b2 = (0 - ((tidx >> 5)  & 1)) ^ tw1_c[18] ^ bits.a.b2 ^ bits.b.b2 ^ bits.c.b2;
+      cur.b1 = (0 - ((tidx >> 4)  & 1)) ^ tw1_c[17] ^ bits.a.b1 ^ bits.b.b1 ^ bits.c.b1;
+      cur.b0 = (0 - ((tidx >> 3)  & 1)) ^ tw1_c[16] ^ bits.a.b0 ^ bits.b.b0 ^ bits.c.b0;
+      break;
+    case 3:
+      cur.b7 = key_hi[15]               ^ tw1_c[63] ^ bits.a.b7 ^ bits.b.b7 ^ bits.c.b7;
+      cur.b6 = key_hi[14]               ^ tw1_c[62] ^ bits.a.b6 ^ bits.b.b6 ^ bits.c.b6;
+      cur.b5 = key_hi[13]               ^ tw1_c[61] ^ bits.a.b5 ^ bits.b.b5 ^ bits.c.b5;
+      cur.b4 = key_hi[12]               ^ tw1_c[60] ^ bits.a.b4 ^ bits.b.b4 ^ bits.c.b4;
+      cur.b3 = key_hi[11]               ^ tw1_c[59] ^ bits.a.b3 ^ bits.b.b3 ^ bits.c.b3;
+      cur.b2 = key_hi[10]               ^ tw1_c[58] ^ bits.a.b2 ^ bits.b.b2 ^ bits.c.b2;
+      cur.b1 = key_hi[9]                ^ tw1_c[57] ^ bits.a.b1 ^ bits.b.b1 ^ bits.c.b1;
+      cur.b0 = key_hi[8]                ^ tw1_c[56] ^ bits.a.b0 ^ bits.b.b0 ^ bits.c.b0;
+      break;
+    case 4:
+      cur.b7 = (0 - ((bidx >> 8)  & 1)) ^ tw1_c[39] ^ bits.a.b7 ^ bits.b.b7 ^ bits.c.b7;
+      cur.b6 = (0 - ((bidx >> 7)  & 1)) ^ tw1_c[38] ^ bits.a.b6 ^ bits.b.b6 ^ bits.c.b6;
+      cur.b5 = (0 - ((bidx >> 6)  & 1)) ^ tw1_c[37] ^ bits.a.b5 ^ bits.b.b5 ^ bits.c.b5;
+      cur.b4 = (0 - ((bidx >> 5)  & 1)) ^ tw1_c[36] ^ bits.a.b4 ^ bits.b.b4 ^ bits.c.b4;
+      cur.b3 = (0 - ((bidx >> 4)  & 1)) ^ tw1_c[35] ^ bits.a.b3 ^ bits.b.b3 ^ bits.c.b3;
+      cur.b2 = (0 - ((bidx >> 3)  & 1)) ^ tw1_c[34] ^ bits.a.b2 ^ bits.b.b2 ^ bits.c.b2;
+      cur.b1 = (0 - ((bidx >> 2)  & 1)) ^ tw1_c[33] ^ bits.a.b1 ^ bits.b.b1 ^ bits.c.b1;
+      cur.b0 = (0 - ((bidx >> 1)  & 1)) ^ tw1_c[32] ^ bits.a.b0 ^ bits.b.b0 ^ bits.c.b0;
+      break;
+    case 5:
+      cur.b7 = key_hi[23]               ^ tw1_c[15] ^ bits.a.b7 ^ bits.b.b7 ^ bits.c.b7;
+      cur.b6 = key_hi[22]               ^ tw1_c[14] ^ bits.a.b6 ^ bits.b.b6 ^ bits.c.b6;
+      cur.b5 = key_hi[21]               ^ tw1_c[13] ^ bits.a.b5 ^ bits.b.b5 ^ bits.c.b5;
+      cur.b4 = key_hi[20]               ^ tw1_c[12] ^ bits.a.b4 ^ bits.b.b4 ^ bits.c.b4;
+      cur.b3 = key_hi[19]               ^ tw1_c[11] ^ bits.a.b3 ^ bits.b.b3 ^ bits.c.b3;
+      cur.b2 = key_hi[18]               ^ tw1_c[10] ^ bits.a.b2 ^ bits.b.b2 ^ bits.c.b2;
+      cur.b1 = key_hi[17]               ^ tw1_c[9]  ^ bits.a.b1 ^ bits.b.b1 ^ bits.c.b1;
+      cur.b0 = key_hi[16]               ^ tw1_c[8]  ^ bits.a.b0 ^ bits.b.b0 ^ bits.c.b0;
+      break;
+    case 6:
+      cur.b7 = (0 - ((bidx >> 16) & 1)) ^ tw1_c[55] ^ bits.a.b7 ^ bits.b.b7 ^ bits.c.b7;
+      cur.b6 = (0 - ((bidx >> 15) & 1)) ^ tw1_c[54] ^ bits.a.b6 ^ bits.b.b6 ^ bits.c.b6;
+      cur.b5 = (0 - ((bidx >> 14) & 1)) ^ tw1_c[53] ^ bits.a.b5 ^ bits.b.b5 ^ bits.c.b5;
+      cur.b4 = (0 - ((bidx >> 13) & 1)) ^ tw1_c[52] ^ bits.a.b4 ^ bits.b.b4 ^ bits.c.b4;
+      cur.b3 = (0 - ((bidx >> 12) & 1)) ^ tw1_c[51] ^ bits.a.b3 ^ bits.b.b3 ^ bits.c.b3;
+      cur.b2 = (0 - ((bidx >> 11) & 1)) ^ tw1_c[50] ^ bits.a.b2 ^ bits.b.b2 ^ bits.c.b2;
+      cur.b1 = (0 - ((bidx >> 10) & 1)) ^ tw1_c[49] ^ bits.a.b1 ^ bits.b.b1 ^ bits.c.b1;
+      cur.b0 = (0 - ((bidx >> 9)  & 1)) ^ tw1_c[48] ^ bits.a.b0 ^ bits.b.b0 ^ bits.c.b0;
+      break;
+    case 7:
+      cur.b7 = (0 - ((tidx >> 2) & 1))  ^ tw1_c[31] ^ bits.a.b7 ^ bits.b.b7 ^ bits.c.b7;
+      cur.b6 = (0 - ((tidx >> 1) & 1))  ^ tw1_c[30] ^ bits.a.b6 ^ bits.b.b6 ^ bits.c.b6;
+      cur.b5 = (0 -  (tidx       & 1))  ^ tw1_c[29] ^ bits.a.b5 ^ bits.b.b5 ^ bits.c.b5;
+      cur.b4 = 0xffff0000               ^ tw1_c[28] ^ bits.a.b4 ^ bits.b.b4 ^ bits.c.b4;
+      cur.b3 = 0xff00ff00               ^ tw1_c[27] ^ bits.a.b3 ^ bits.b.b3 ^ bits.c.b3;
+      cur.b2 = 0xf0f0f0f0               ^ tw1_c[26] ^ bits.a.b2 ^ bits.b.b2 ^ bits.c.b2;
+      cur.b1 = 0xcccccccc               ^ tw1_c[25] ^ bits.a.b1 ^ bits.b.b1 ^ bits.c.b1;
+      cur.b0 = 0xaaaaaaaa               ^ tw1_c[24] ^ bits.a.b0 ^ bits.b.b0 ^ bits.c.b0;
+      break;
+  }
+
+  bits.b.b0 = s0(cur);
+  bits.b.b1 = s1(cur);
+  bits.b.b2 = s2(cur);
+  bits.b.b3 = s3(cur);
+  bits.b.b4 = s4(cur);
+  bits.b.b5 = s5(cur);
+  bits.b.b6 = s6(cur);
+  bits.b.b7 = s7(cur);
+  return bits;
+}
+
+__device__ __forceinline__ twentyfourbits encrypt_last_round(twentyfourbits bits, int round,
+    volatile const int * __restrict key_hi) {
+
+  volatile int bidx = blockIdx.x;
+  volatile int tidx = threadIdx.x;
+
+  switch (round) {
+    case 2:
+      bits.a.b7 = (0 - ((bidx >> 16) & 1)) ^ tw1_c[39] ^ bits.b.b7 ^ bits.a.b7;
+      bits.a.b6 = (0 - ((bidx >> 15) & 1)) ^ tw1_c[38] ^ bits.b.b6 ^ bits.a.b6;
+      bits.a.b5 = (0 - ((bidx >> 14) & 1)) ^ tw1_c[37] ^ bits.b.b5 ^ bits.a.b5;
+      bits.a.b4 = (0 - ((bidx >> 13) & 1)) ^ tw1_c[36] ^ bits.b.b4 ^ bits.a.b4;
+      bits.a.b3 = (0 - ((bidx >> 12) & 1)) ^ tw1_c[35] ^ bits.b.b3 ^ bits.a.b3;
+      bits.a.b2 = (0 - ((bidx >> 11) & 1)) ^ tw1_c[34] ^ bits.b.b2 ^ bits.a.b2;
+      bits.a.b1 = (0 - ((bidx >> 10) & 1)) ^ tw1_c[33] ^ bits.b.b1 ^ bits.a.b1;
+      bits.a.b0 = (0 - ((bidx >> 9)  & 1)) ^ tw1_c[32] ^ bits.b.b0 ^ bits.a.b0;
+      break;
+    case 3:
+      bits.a.b7 = (0 - ((tidx >> 2)  & 1)) ^ tw1_c[15] ^ bits.b.b7 ^ bits.a.b7;
+      bits.a.b6 = (0 - ((tidx >> 1)  & 1)) ^ tw1_c[14] ^ bits.b.b6 ^ bits.a.b6;
+      bits.a.b5 = (0 -  (tidx        & 1)) ^ tw1_c[13] ^ bits.b.b5 ^ bits.a.b5;
+      bits.a.b4 = 0xffff0000               ^ tw1_c[12] ^ bits.b.b4 ^ bits.a.b4;
+      bits.a.b3 = 0xff00ff00               ^ tw1_c[11] ^ bits.b.b3 ^ bits.a.b3;
+      bits.a.b2 = 0xf0f0f0f0               ^ tw1_c[10] ^ bits.b.b2 ^ bits.a.b2;
+      bits.a.b1 = 0xcccccccc               ^ tw1_c[9]  ^ bits.b.b1 ^ bits.a.b1;
+      bits.a.b0 = 0xaaaaaaaa               ^ tw1_c[8]  ^ bits.b.b0 ^ bits.a.b0;
+      break;
+    case 4:
+      bits.a.b7 = key_hi[7]                ^ tw1_c[55] ^ bits.b.b7 ^ bits.a.b7;
+      bits.a.b6 = key_hi[6]                ^ tw1_c[54] ^ bits.b.b6 ^ bits.a.b6;
+      bits.a.b5 = key_hi[5]                ^ tw1_c[53] ^ bits.b.b5 ^ bits.a.b5;
+      bits.a.b4 = key_hi[4]                ^ tw1_c[52] ^ bits.b.b4 ^ bits.a.b4;
+      bits.a.b3 = key_hi[3]                ^ tw1_c[51] ^ bits.b.b3 ^ bits.a.b3;
+      bits.a.b2 = key_hi[2]                ^ tw1_c[50] ^ bits.b.b2 ^ bits.a.b2;
+      bits.a.b1 = key_hi[1]                ^ tw1_c[49] ^ bits.b.b1 ^ bits.a.b1;
+      bits.a.b0 = key_hi[0]                ^ tw1_c[48] ^ bits.b.b0 ^ bits.a.b0;
+      break;
+    case 5:
+      bits.a.b7 = (0 -  (bidx        & 1)) ^ tw1_c[31] ^ bits.b.b7 ^ bits.a.b7;
+      bits.a.b6 = (0 - ((tidx >> 9)  & 1)) ^ tw1_c[30] ^ bits.b.b6 ^ bits.a.b6;
+      bits.a.b5 = (0 - ((tidx >> 8)  & 1)) ^ tw1_c[29] ^ bits.b.b5 ^ bits.a.b5;
+      bits.a.b4 = (0 - ((tidx >> 7)  & 1)) ^ tw1_c[28] ^ bits.b.b4 ^ bits.a.b4;
+      bits.a.b3 = (0 - ((tidx >> 6)  & 1)) ^ tw1_c[27] ^ bits.b.b3 ^ bits.a.b3;
+      bits.a.b2 = (0 - ((tidx >> 5)  & 1)) ^ tw1_c[26] ^ bits.b.b2 ^ bits.a.b2;
+      bits.a.b1 = (0 - ((tidx >> 4)  & 1)) ^ tw1_c[25] ^ bits.b.b1 ^ bits.a.b1;
+      bits.a.b0 = (0 - ((tidx >> 3)  & 1)) ^ tw1_c[24] ^ bits.b.b0 ^ bits.a.b0;
+      break;
+    case 6:
+      bits.a.b7 = key_hi[15]               ^ tw1_c[7]  ^ bits.b.b7 ^ bits.a.b7;
+      bits.a.b6 = key_hi[14]               ^ tw1_c[6]  ^ bits.b.b6 ^ bits.a.b6;
+      bits.a.b5 = key_hi[13]               ^ tw1_c[5]  ^ bits.b.b5 ^ bits.a.b5;
+      bits.a.b4 = key_hi[12]               ^ tw1_c[4]  ^ bits.b.b4 ^ bits.a.b4;
+      bits.a.b3 = key_hi[11]               ^ tw1_c[3]  ^ bits.b.b3 ^ bits.a.b3;
+      bits.a.b2 = key_hi[10]               ^ tw1_c[2]  ^ bits.b.b2 ^ bits.a.b2;
+      bits.a.b1 = key_hi[9]                ^ tw1_c[1]  ^ bits.b.b1 ^ bits.a.b1;
+      bits.a.b0 = key_hi[8]                ^ tw1_c[0]  ^ bits.b.b0 ^ bits.a.b0;
+      break;
+    case 7:
+      bits.a.b7 = (0 - ((bidx >> 8)  & 1)) ^ tw1_c[47] ^ bits.b.b7 ^ bits.a.b7;
+      bits.a.b6 = (0 - ((bidx >> 7)  & 1)) ^ tw1_c[46] ^ bits.b.b6 ^ bits.a.b6;
+      bits.a.b5 = (0 - ((bidx >> 6)  & 1)) ^ tw1_c[45] ^ bits.b.b5 ^ bits.a.b5;
+      bits.a.b4 = (0 - ((bidx >> 5)  & 1)) ^ tw1_c[44] ^ bits.b.b4 ^ bits.a.b4;
+      bits.a.b3 = (0 - ((bidx >> 4)  & 1)) ^ tw1_c[43] ^ bits.b.b3 ^ bits.a.b3;
+      bits.a.b2 = (0 - ((bidx >> 3)  & 1)) ^ tw1_c[42] ^ bits.b.b2 ^ bits.a.b2;
+      bits.a.b1 = (0 - ((bidx >> 2)  & 1)) ^ tw1_c[41] ^ bits.b.b1 ^ bits.a.b1;
+      bits.a.b0 = (0 - ((bidx >> 1)  & 1)) ^ tw1_c[40] ^ bits.b.b0 ^ bits.a.b0;
+      break;
+  }
+
+  switch (round) {
+    case 2:
+      bits.c.b7 = (0 - ((bidx >> 8)  & 1)) ^ tw1_c[31] ^ bits.b.b7 ^ bits.c.b7;
+      bits.c.b6 = (0 - ((bidx >> 7)  & 1)) ^ tw1_c[30] ^ bits.b.b6 ^ bits.c.b6;
+      bits.c.b5 = (0 - ((bidx >> 6)  & 1)) ^ tw1_c[29] ^ bits.b.b5 ^ bits.c.b5;
+      bits.c.b4 = (0 - ((bidx >> 5)  & 1)) ^ tw1_c[28] ^ bits.b.b4 ^ bits.c.b4;
+      bits.c.b3 = (0 - ((bidx >> 4)  & 1)) ^ tw1_c[27] ^ bits.b.b3 ^ bits.c.b3;
+      bits.c.b2 = (0 - ((bidx >> 3)  & 1)) ^ tw1_c[26] ^ bits.b.b2 ^ bits.c.b2;
+      bits.c.b1 = (0 - ((bidx >> 2)  & 1)) ^ tw1_c[25] ^ bits.b.b1 ^ bits.c.b1;
+      bits.c.b0 = (0 - ((bidx >> 1)  & 1)) ^ tw1_c[24] ^ bits.b.b0 ^ bits.c.b0;
+      break;
+    case 3:
+      bits.c.b7 = key_hi[23]               ^ tw1_c[7]  ^ bits.b.b7 ^ bits.c.b7;
+      bits.c.b6 = key_hi[22]               ^ tw1_c[6]  ^ bits.b.b6 ^ bits.c.b6;
+      bits.c.b5 = key_hi[21]               ^ tw1_c[5]  ^ bits.b.b5 ^ bits.c.b5;
+      bits.c.b4 = key_hi[20]               ^ tw1_c[4]  ^ bits.b.b4 ^ bits.c.b4;
+      bits.c.b3 = key_hi[19]               ^ tw1_c[3]  ^ bits.b.b3 ^ bits.c.b3;
+      bits.c.b2 = key_hi[18]               ^ tw1_c[2]  ^ bits.b.b2 ^ bits.c.b2;
+      bits.c.b1 = key_hi[17]               ^ tw1_c[1]  ^ bits.b.b1 ^ bits.c.b1;
+      bits.c.b0 = key_hi[16]               ^ tw1_c[0]  ^ bits.b.b0 ^ bits.c.b0;
+      break;
+    case 4:
+      bits.c.b7 = (0 - ((bidx >> 16) & 1)) ^ tw1_c[47] ^ bits.b.b7 ^ bits.c.b7;
+      bits.c.b6 = (0 - ((bidx >> 15) & 1)) ^ tw1_c[46] ^ bits.b.b6 ^ bits.c.b6;
+      bits.c.b5 = (0 - ((bidx >> 14) & 1)) ^ tw1_c[45] ^ bits.b.b5 ^ bits.c.b5;
+      bits.c.b4 = (0 - ((bidx >> 13) & 1)) ^ tw1_c[44] ^ bits.b.b4 ^ bits.c.b4;
+      bits.c.b3 = (0 - ((bidx >> 12) & 1)) ^ tw1_c[43] ^ bits.b.b3 ^ bits.c.b3;
+      bits.c.b2 = (0 - ((bidx >> 11) & 1)) ^ tw1_c[42] ^ bits.b.b2 ^ bits.c.b2;
+      bits.c.b1 = (0 - ((bidx >> 10) & 1)) ^ tw1_c[41] ^ bits.b.b1 ^ bits.c.b1;
+      bits.c.b0 = (0 - ((bidx >> 9)  & 1)) ^ tw1_c[40] ^ bits.b.b0 ^ bits.c.b0;
+      break;
+    case 5:
+      bits.c.b7 = (0 - ((tidx >> 2)  & 1)) ^ tw1_c[23] ^ bits.b.b7 ^ bits.c.b7;
+      bits.c.b6 = (0 - ((tidx >> 1)  & 1)) ^ tw1_c[22] ^ bits.b.b6 ^ bits.c.b6;
+      bits.c.b5 = (0 -  (tidx        & 1)) ^ tw1_c[21] ^ bits.b.b5 ^ bits.c.b5;
+      bits.c.b4 = 0xffff0000               ^ tw1_c[20] ^ bits.b.b4 ^ bits.c.b4;
+      bits.c.b3 = 0xff00ff00               ^ tw1_c[19] ^ bits.b.b3 ^ bits.c.b3;
+      bits.c.b2 = 0xf0f0f0f0               ^ tw1_c[18] ^ bits.b.b2 ^ bits.c.b2;
+      bits.c.b1 = 0xcccccccc               ^ tw1_c[17] ^ bits.b.b1 ^ bits.c.b1;
+      bits.c.b0 = 0xaaaaaaaa               ^ tw1_c[16] ^ bits.b.b0 ^ bits.c.b0;
+      break;
+    case 6:
+      bits.c.b7 = key_hi[7]                ^ tw1_c[63] ^ bits.b.b7 ^ bits.c.b7;
+      bits.c.b6 = key_hi[6]                ^ tw1_c[62] ^ bits.b.b6 ^ bits.c.b6;
+      bits.c.b5 = key_hi[5]                ^ tw1_c[61] ^ bits.b.b5 ^ bits.c.b5;
+      bits.c.b4 = key_hi[4]                ^ tw1_c[60] ^ bits.b.b4 ^ bits.c.b4;
+      bits.c.b3 = key_hi[3]                ^ tw1_c[59] ^ bits.b.b3 ^ bits.c.b3;
+      bits.c.b2 = key_hi[2]                ^ tw1_c[58] ^ bits.b.b2 ^ bits.c.b2;
+      bits.c.b1 = key_hi[1]                ^ tw1_c[57] ^ bits.b.b1 ^ bits.c.b1;
+      bits.c.b0 = key_hi[0]                ^ tw1_c[56] ^ bits.b.b0 ^ bits.c.b0;
+      break;
+    case 7:
+      bits.c.b7 = (0 -  (bidx        & 1)) ^ tw1_c[39] ^ bits.b.b7 ^ bits.c.b7;
+      bits.c.b6 = (0 - ((tidx >> 9)  & 1)) ^ tw1_c[38] ^ bits.b.b6 ^ bits.c.b6;
+      bits.c.b5 = (0 - ((tidx >> 8)  & 1)) ^ tw1_c[37] ^ bits.b.b5 ^ bits.c.b5;
+      bits.c.b4 = (0 - ((tidx >> 7)  & 1)) ^ tw1_c[36] ^ bits.b.b4 ^ bits.c.b4;
+      bits.c.b3 = (0 - ((tidx >> 6)  & 1)) ^ tw1_c[35] ^ bits.b.b3 ^ bits.c.b3;
+      bits.c.b2 = (0 - ((tidx >> 5)  & 1)) ^ tw1_c[34] ^ bits.b.b2 ^ bits.c.b2;
+      bits.c.b1 = (0 - ((tidx >> 4)  & 1)) ^ tw1_c[33] ^ bits.b.b1 ^ bits.c.b1;
+      bits.c.b0 = (0 - ((tidx >> 3)  & 1)) ^ tw1_c[32] ^ bits.b.b0 ^ bits.c.b0;
+      break;
+  }
+
+  switch (round) {
+    case 2:
+      bits.b.b7 = (0 -  (bidx        & 1)) ^ tw1_c[23] ^ bits.b.b7;
+      bits.b.b6 = (0 - ((tidx >> 9)  & 1)) ^ tw1_c[22] ^ bits.b.b6;
+      bits.b.b5 = (0 - ((tidx >> 8)  & 1)) ^ tw1_c[21] ^ bits.b.b5;
+      bits.b.b4 = (0 - ((tidx >> 7)  & 1)) ^ tw1_c[20] ^ bits.b.b4;
+      bits.b.b3 = (0 - ((tidx >> 6)  & 1)) ^ tw1_c[19] ^ bits.b.b3;
+      bits.b.b2 = (0 - ((tidx >> 5)  & 1)) ^ tw1_c[18] ^ bits.b.b2;
+      bits.b.b1 = (0 - ((tidx >> 4)  & 1)) ^ tw1_c[17] ^ bits.b.b1;
+      bits.b.b0 = (0 - ((tidx >> 3)  & 1)) ^ tw1_c[16] ^ bits.b.b0;
+      break;
+    case 3:
+      bits.b.b7 = key_hi[15]               ^ tw1_c[63] ^ bits.b.b7;
+      bits.b.b6 = key_hi[14]               ^ tw1_c[62] ^ bits.b.b6;
+      bits.b.b5 = key_hi[13]               ^ tw1_c[61] ^ bits.b.b5;
+      bits.b.b4 = key_hi[12]               ^ tw1_c[60] ^ bits.b.b4;
+      bits.b.b3 = key_hi[11]               ^ tw1_c[59] ^ bits.b.b3;
+      bits.b.b2 = key_hi[10]               ^ tw1_c[58] ^ bits.b.b2;
+      bits.b.b1 = key_hi[9]                ^ tw1_c[57] ^ bits.b.b1;
+      bits.b.b0 = key_hi[8]                ^ tw1_c[56] ^ bits.b.b0;
+      break;
+    case 4:
+      bits.b.b7 = (0 - ((bidx >> 8)  & 1)) ^ tw1_c[39] ^ bits.b.b7;
+      bits.b.b6 = (0 - ((bidx >> 7)  & 1)) ^ tw1_c[38] ^ bits.b.b6;
+      bits.b.b5 = (0 - ((bidx >> 6)  & 1)) ^ tw1_c[37] ^ bits.b.b5;
+      bits.b.b4 = (0 - ((bidx >> 5)  & 1)) ^ tw1_c[36] ^ bits.b.b4;
+      bits.b.b3 = (0 - ((bidx >> 4)  & 1)) ^ tw1_c[35] ^ bits.b.b3;
+      bits.b.b2 = (0 - ((bidx >> 3)  & 1)) ^ tw1_c[34] ^ bits.b.b2;
+      bits.b.b1 = (0 - ((bidx >> 2)  & 1)) ^ tw1_c[33] ^ bits.b.b1;
+      bits.b.b0 = (0 - ((bidx >> 1)  & 1)) ^ tw1_c[32] ^ bits.b.b0;
+      break;
+    case 5:
+      bits.b.b7 = key_hi[23]               ^ tw1_c[15] ^ bits.b.b7;
+      bits.b.b6 = key_hi[22]               ^ tw1_c[14] ^ bits.b.b6;
+      bits.b.b5 = key_hi[21]               ^ tw1_c[13] ^ bits.b.b5;
+      bits.b.b4 = key_hi[20]               ^ tw1_c[12] ^ bits.b.b4;
+      bits.b.b3 = key_hi[19]               ^ tw1_c[11] ^ bits.b.b3;
+      bits.b.b2 = key_hi[18]               ^ tw1_c[10] ^ bits.b.b2;
+      bits.b.b1 = key_hi[17]               ^ tw1_c[9]  ^ bits.b.b1;
+      bits.b.b0 = key_hi[16]               ^ tw1_c[8]  ^ bits.b.b0;
+      break;
+    case 6:
+      bits.b.b7 = (0 - ((bidx >> 16) & 1)) ^ tw1_c[55] ^ bits.b.b7;
+      bits.b.b6 = (0 - ((bidx >> 15) & 1)) ^ tw1_c[54] ^ bits.b.b6;
+      bits.b.b5 = (0 - ((bidx >> 14) & 1)) ^ tw1_c[53] ^ bits.b.b5;
+      bits.b.b4 = (0 - ((bidx >> 13) & 1)) ^ tw1_c[52] ^ bits.b.b4;
+      bits.b.b3 = (0 - ((bidx >> 12) & 1)) ^ tw1_c[51] ^ bits.b.b3;
+      bits.b.b2 = (0 - ((bidx >> 11) & 1)) ^ tw1_c[50] ^ bits.b.b2;
+      bits.b.b1 = (0 - ((bidx >> 10) & 1)) ^ tw1_c[49] ^ bits.b.b1;
+      bits.b.b0 = (0 - ((bidx >> 9)  & 1)) ^ tw1_c[48] ^ bits.b.b0;
+      break;
+    case 7:
+      bits.b.b7 = (0 - ((tidx >> 2) & 1))  ^ tw1_c[31] ^ bits.b.b7;
+      bits.b.b6 = (0 - ((tidx >> 1) & 1))  ^ tw1_c[30] ^ bits.b.b6;
+      bits.b.b5 = (0 -  (tidx       & 1))  ^ tw1_c[29] ^ bits.b.b5;
+      bits.b.b4 = 0xffff0000               ^ tw1_c[28] ^ bits.b.b4;
+      bits.b.b3 = 0xff00ff00               ^ tw1_c[27] ^ bits.b.b3;
+      bits.b.b2 = 0xf0f0f0f0               ^ tw1_c[26] ^ bits.b.b2;
+      bits.b.b1 = 0xcccccccc               ^ tw1_c[25] ^ bits.b.b1;
+      bits.b.b0 = 0xaaaaaaaa               ^ tw1_c[24] ^ bits.b.b0;
+      break;
+  }
+
+  return bits;
+}
+
+__global__ void brute_force_8(int *ret, volatile int off) {
+  __shared__ int pt[24];
+  __shared__ int ct[24];
+  __shared__ int key[24];
+  __shared__ int found[100];
+  if (threadIdx.x < 24) {
+    pt[threadIdx.x] = pt1_c[threadIdx.x + off];
+    ct[threadIdx.x] = ct1_c[threadIdx.x + off];
+    key[threadIdx.x] = key_c[threadIdx.x + off];
+    found[threadIdx.x] = 0;
+  }
+
+  __syncthreads();
+
+  twentyfourbits bits;
+  bits.a.b7 = pt[23];
+  bits.a.b6 = pt[22];
+  bits.a.b5 = pt[21];
+  bits.a.b4 = pt[20];
+  bits.a.b3 = pt[19];
+  bits.a.b2 = pt[18];
+  bits.a.b1 = pt[17];
+  bits.a.b0 = pt[16];
+  bits.b.b7 = pt[15];
+  bits.b.b6 = pt[14];
+  bits.b.b5 = pt[13];
+  bits.b.b4 = pt[12];
+  bits.b.b3 = pt[11];
+  bits.b.b2 = pt[10];
+  bits.b.b1 = pt[9];
+  bits.b.b0 = pt[8];
+  bits.c.b7 = pt[7];
+  bits.c.b6 = pt[6];
+  bits.c.b5 = pt[5];
+  bits.c.b4 = pt[4];
+  bits.c.b3 = pt[3];
+  bits.c.b2 = pt[2];
+  bits.c.b1 = pt[1];
+  bits.c.b0 = pt[0];
+
+  #pragma unroll
+  for (int i = 2; i < 7; i++) {
+    bits = encrypt_round(bits, i, &key[0]);
+  }
+  bits = encrypt_last_round(bits, 7, &key[0]);
+
+  int rr = 0;
+  rr |= bits.a.b7 ^ ct[23];
+  rr |= bits.a.b6 ^ ct[22];
+  rr |= bits.a.b5 ^ ct[21];
+  rr |= bits.a.b4 ^ ct[20];
+  rr |= bits.a.b3 ^ ct[19];
+  rr |= bits.a.b2 ^ ct[18];
+  rr |= bits.a.b1 ^ ct[17];
+  rr |= bits.a.b0 ^ ct[16];
+  rr |= bits.b.b7 ^ ct[15];
+  rr |= bits.b.b6 ^ ct[14];
+  rr |= bits.b.b5 ^ ct[13];
+  rr |= bits.b.b4 ^ ct[12];
+  rr |= bits.b.b3 ^ ct[11];
+  rr |= bits.b.b2 ^ ct[10];
+  rr |= bits.b.b1 ^ ct[9];
+  rr |= bits.b.b0 ^ ct[8];
+  rr |= bits.c.b7 ^ ct[7];
+  rr |= bits.c.b6 ^ ct[6];
+  rr |= bits.c.b5 ^ ct[5];
+  rr |= bits.c.b4 ^ ct[4];
+  rr |= bits.c.b3 ^ ct[3];
+  rr |= bits.c.b2 ^ ct[2];
+  rr |= bits.c.b1 ^ ct[1];
+  rr |= bits.c.b0 ^ ct[0];
+
+  int ptr;
+  if (rr != 0xffffffff) {
+    ptr = atomicAdd_block(found, 1);
+    found[ptr + 2] = (blockIdx.x << 10) | threadIdx.x;
+    found[ptr + 3] = rr;
+  }
+
+  __syncthreads();
+
+  if (found[0] == 0) {
+    return;
+  }
+
+  if (threadIdx.x == 0) {
+    found[1] = atomicAdd(ret, found[0]) * 2 + 1;
+  }
+
+  __syncthreads();
+
+  if (threadIdx.x < found[0]) {
+    ptr = found[1] + threadIdx.x * 2;
+    ret[ptr]     = found[(threadIdx.x * 2) + 2];
+    ret[ptr + 1] = found[(threadIdx.x * 2) + 3];
+  }
+}
+
+__device__ __forceinline__ eightbits sbox(eightbits in) {
+  eightbits out;
+  out.b0 = s0(in);
+  out.b1 = s1(in);
+  out.b2 = s2(in);
+  out.b3 = s3(in);
+  out.b4 = s4(in);
+  out.b5 = s5(in);
+  out.b6 = s6(in);
+  out.b7 = s7(in);
+  return out;
+}
+
+template <int rounds>
+__launch_bounds__(1024, 1)
+__global__ void test_candidates(int *in, int *out, int num_candidates) {
+
+  /*__shared__ int keys_in[128];
+  if (threadIdx.x < 128) {
+    keys_in[threadIdx.x] = in[((blockIdx.x << 7) | threadIdx.x) + 1];
+  }
+
+  __syncthreads();
+
+  int k3456 = keys_in[threadIdx.x >> 3];*/
+
+  int ptr = ((blockIdx.x << 7) | (threadIdx.x >> 3));
+  if (ptr >= num_candidates) {
+    return;
+  }
+  //int k3456 = in[ptr + 1];
+
+  __shared__ int found[1024];
+  __shared__ int k3456[1024];
+  __shared__ eightbits aa[1024];
+
+  k3456[threadIdx.x] = in[ptr + 1];
+
+  eightbits bb, cc;
+
+  /* Round 1. */
+  bb.b0 = pt1_c[8];
+  bb.b1 = pt1_c[9];
+  bb.b2 = pt1_c[10];
+  bb.b3 = pt1_c[11];
+  bb.b4 = pt1_c[12];
+  bb.b5 = pt1_c[13];
+  bb.b6 = pt1_c[14];
+  bb.b7 = pt1_c[15];
+  aa[threadIdx.x].b0 = pt1_c[16] ^ bb.b0 ^ key_c[8]  ^ tw1_c[56];
+  aa[threadIdx.x].b1 = pt1_c[17] ^ bb.b1 ^ key_c[9]  ^ tw1_c[57];
+  aa[threadIdx.x].b2 = pt1_c[18] ^ bb.b2 ^ key_c[10] ^ tw1_c[58];
+  aa[threadIdx.x].b3 = pt1_c[19] ^ bb.b3 ^ key_c[11] ^ tw1_c[59];
+  aa[threadIdx.x].b4 = pt1_c[20] ^ bb.b4 ^ key_c[12] ^ tw1_c[60];
+  aa[threadIdx.x].b5 = pt1_c[21] ^ bb.b5 ^ key_c[13] ^ tw1_c[61];
+  aa[threadIdx.x].b6 = pt1_c[22] ^ bb.b6 ^ key_c[14] ^ tw1_c[62];
+  aa[threadIdx.x].b7 = pt1_c[23] ^ bb.b7 ^ key_c[15] ^ tw1_c[63];
+  aa[threadIdx.x] = sbox(aa[threadIdx.x]);
+
+  cc.b0 = pt1_c[0]  ^ bb.b0 ^ key_c[0] ^ tw1_c[48];
+  cc.b1 = pt1_c[1]  ^ bb.b1 ^ key_c[1] ^ tw1_c[49];
+  cc.b2 = pt1_c[2]  ^ bb.b2 ^ key_c[2] ^ tw1_c[50];
+  cc.b3 = pt1_c[3]  ^ bb.b3 ^ key_c[3] ^ tw1_c[51];
+  cc.b4 = pt1_c[4]  ^ bb.b4 ^ key_c[4] ^ tw1_c[52];
+  cc.b5 = pt1_c[5]  ^ bb.b5 ^ key_c[5] ^ tw1_c[53];
+  cc.b6 = pt1_c[6]  ^ bb.b6 ^ key_c[6] ^ tw1_c[54];
+  cc.b7 = pt1_c[7]  ^ bb.b7 ^ key_c[7] ^ tw1_c[55];
+  cc = sbox(cc);
+
+  bb.b0 ^= aa[threadIdx.x].b0  ^ cc.b0 ^ (0 - ((k3456[threadIdx.x] >> 24) & 1)) ^ tw1_c[40];
+  bb.b1 ^= aa[threadIdx.x].b1  ^ cc.b1 ^ (0 - ((k3456[threadIdx.x] >> 25) & 1)) ^ tw1_c[41];
+  bb.b2 ^= aa[threadIdx.x].b2  ^ cc.b2 ^ (0 - ((k3456[threadIdx.x] >> 26) & 1)) ^ tw1_c[42];
+  bb.b3 ^= aa[threadIdx.x].b3  ^ cc.b3 ^ (0 - ((k3456[threadIdx.x] >> 27) & 1)) ^ tw1_c[43];
+  bb.b4 ^= aa[threadIdx.x].b4  ^ cc.b4 ^ (0 - ((k3456[threadIdx.x] >> 28) & 1)) ^ tw1_c[44];
+  bb.b5 ^= aa[threadIdx.x].b5  ^ cc.b5 ^ (0 - ((k3456[threadIdx.x] >> 29) & 1)) ^ tw1_c[45];
+  bb.b6 ^= aa[threadIdx.x].b6  ^ cc.b6 ^ (0 - ((k3456[threadIdx.x] >> 30) & 1)) ^ tw1_c[46];
+  bb.b7 ^= aa[threadIdx.x].b7  ^ cc.b7 ^ (0 - ((k3456[threadIdx.x] >> 31) & 1)) ^ tw1_c[47];
+  bb = sbox(bb);
+
+  /* Round 2. */
+  aa[threadIdx.x].b0 ^= bb.b0 ^ (0 - ((k3456[threadIdx.x] >> 16) & 1)) ^ tw1_c[32];
+  aa[threadIdx.x].b1 ^= bb.b1 ^ (0 - ((k3456[threadIdx.x] >> 17) & 1)) ^ tw1_c[33];
+  aa[threadIdx.x].b2 ^= bb.b2 ^ (0 - ((k3456[threadIdx.x] >> 18) & 1)) ^ tw1_c[34];
+  aa[threadIdx.x].b3 ^= bb.b3 ^ (0 - ((k3456[threadIdx.x] >> 19) & 1)) ^ tw1_c[35];
+  aa[threadIdx.x].b4 ^= bb.b4 ^ (0 - ((k3456[threadIdx.x] >> 20) & 1)) ^ tw1_c[36];
+  aa[threadIdx.x].b5 ^= bb.b5 ^ (0 - ((k3456[threadIdx.x] >> 21) & 1)) ^ tw1_c[37];
+  aa[threadIdx.x].b6 ^= bb.b6 ^ (0 - ((k3456[threadIdx.x] >> 22) & 1)) ^ tw1_c[38];
+  aa[threadIdx.x].b7 ^= bb.b7 ^ (0 - ((k3456[threadIdx.x] >> 23) & 1)) ^ tw1_c[39];
+  aa[threadIdx.x] = sbox(aa[threadIdx.x]);
+
+  cc.b0 ^= bb.b0 ^ (0 - ((k3456[threadIdx.x] >> 8)  & 1)) ^ tw1_c[24];
+  cc.b1 ^= bb.b1 ^ (0 - ((k3456[threadIdx.x] >> 9)  & 1)) ^ tw1_c[25];
+  cc.b2 ^= bb.b2 ^ (0 - ((k3456[threadIdx.x] >> 10) & 1)) ^ tw1_c[26];
+  cc.b3 ^= bb.b3 ^ (0 - ((k3456[threadIdx.x] >> 11) & 1)) ^ tw1_c[27];
+  cc.b4 ^= bb.b4 ^ (0 - ((k3456[threadIdx.x] >> 12) & 1)) ^ tw1_c[28];
+  cc.b5 ^= bb.b5 ^ (0 - ((k3456[threadIdx.x] >> 13) & 1)) ^ tw1_c[29];
+  cc.b6 ^= bb.b6 ^ (0 - ((k3456[threadIdx.x] >> 14) & 1)) ^ tw1_c[30];
+  cc.b7 ^= bb.b7 ^ (0 - ((k3456[threadIdx.x] >> 15) & 1)) ^ tw1_c[31];
+  cc = sbox(cc);
+
+  bb.b0 ^= aa[threadIdx.x].b0 ^ cc.b0 ^ (0 - ((k3456[threadIdx.x] >> 0) & 1)) ^ tw1_c[16];
+  bb.b1 ^= aa[threadIdx.x].b1 ^ cc.b1 ^ (0 - ((k3456[threadIdx.x] >> 1) & 1)) ^ tw1_c[17];
+  bb.b2 ^= aa[threadIdx.x].b2 ^ cc.b2 ^ (0 - ((k3456[threadIdx.x] >> 2) & 1)) ^ tw1_c[18];
+  bb.b3 ^= aa[threadIdx.x].b3 ^ cc.b3 ^ (0 - ((k3456[threadIdx.x] >> 3) & 1)) ^ tw1_c[19];
+  bb.b4 ^= aa[threadIdx.x].b4 ^ cc.b4 ^ (0 - ((k3456[threadIdx.x] >> 4) & 1)) ^ tw1_c[20];
+  bb.b5 ^= aa[threadIdx.x].b5 ^ cc.b5 ^ (0 - ((k3456[threadIdx.x] >> 5) & 1)) ^ tw1_c[21];
+  bb.b6 ^= aa[threadIdx.x].b6 ^ cc.b6 ^ (0 - ((k3456[threadIdx.x] >> 6) & 1)) ^ tw1_c[22];
+  bb.b7 ^= aa[threadIdx.x].b7 ^ cc.b7 ^ (0 - ((k3456[threadIdx.x] >> 7) & 1)) ^ tw1_c[23];
+  bb = sbox(bb);
+
+  /* Round 3. */
+  aa[threadIdx.x].b0 ^= bb.b0 ^ 0xaaaaaaaa                     ^ tw1_c[8];
+  aa[threadIdx.x].b1 ^= bb.b1 ^ 0xcccccccc                     ^ tw1_c[9];
+  aa[threadIdx.x].b2 ^= bb.b2 ^ 0xf0f0f0f0                     ^ tw1_c[10];
+  aa[threadIdx.x].b3 ^= bb.b3 ^ 0xff00ff00                     ^ tw1_c[11];
+  aa[threadIdx.x].b4 ^= bb.b4 ^ 0xffff0000                     ^ tw1_c[12];
+  aa[threadIdx.x].b5 ^= bb.b5 ^ (0 -  (threadIdx.x       & 1)) ^ tw1_c[13];
+  aa[threadIdx.x].b6 ^= bb.b6 ^ (0 - ((threadIdx.x >> 1) & 1)) ^ tw1_c[14];
+  aa[threadIdx.x].b7 ^= bb.b7 ^ (0 - ((threadIdx.x >> 2) & 1)) ^ tw1_c[15];
+  aa[threadIdx.x] = sbox(aa[threadIdx.x]);
+
+  cc.b0 ^= bb.b0 ^ key_c[8] ^  tw1_c[0];
+  cc.b1 ^= bb.b1 ^ key_c[9] ^  tw1_c[1];
+  cc.b2 ^= bb.b2 ^ key_c[10] ^ tw1_c[2];
+  cc.b3 ^= bb.b3 ^ key_c[11] ^ tw1_c[3];
+  cc.b4 ^= bb.b4 ^ key_c[12] ^ tw1_c[4];
+  cc.b5 ^= bb.b5 ^ key_c[13] ^ tw1_c[5];
+  cc.b6 ^= bb.b6 ^ key_c[14] ^ tw1_c[6];
+  cc.b7 ^= bb.b7 ^ key_c[15] ^ tw1_c[7];
+  cc = sbox(cc);
+
+  bb.b0 ^= aa[threadIdx.x].b0 ^ cc.b0 ^ key_c[0] ^ tw1_c[56];
+  bb.b1 ^= aa[threadIdx.x].b1 ^ cc.b1 ^ key_c[1] ^ tw1_c[57];
+  bb.b2 ^= aa[threadIdx.x].b2 ^ cc.b2 ^ key_c[2] ^ tw1_c[58];
+  bb.b3 ^= aa[threadIdx.x].b3 ^ cc.b3 ^ key_c[3] ^ tw1_c[59];
+  bb.b4 ^= aa[threadIdx.x].b4 ^ cc.b4 ^ key_c[4] ^ tw1_c[60];
+  bb.b5 ^= aa[threadIdx.x].b5 ^ cc.b5 ^ key_c[5] ^ tw1_c[61];
+  bb.b6 ^= aa[threadIdx.x].b6 ^ cc.b6 ^ key_c[6] ^ tw1_c[62];
+  bb.b7 ^= aa[threadIdx.x].b7 ^ cc.b7 ^ key_c[7] ^ tw1_c[63];
+  bb = sbox(bb);
+
+  /* Round 4. */
+  aa[threadIdx.x].b0 ^= bb.b0 ^ (0 - ((k3456[threadIdx.x] >> 24) & 1)) ^ tw1_c[48];
+  aa[threadIdx.x].b1 ^= bb.b1 ^ (0 - ((k3456[threadIdx.x] >> 25) & 1)) ^ tw1_c[49];
+  aa[threadIdx.x].b2 ^= bb.b2 ^ (0 - ((k3456[threadIdx.x] >> 26) & 1)) ^ tw1_c[50];
+  aa[threadIdx.x].b3 ^= bb.b3 ^ (0 - ((k3456[threadIdx.x] >> 27) & 1)) ^ tw1_c[51];
+  aa[threadIdx.x].b4 ^= bb.b4 ^ (0 - ((k3456[threadIdx.x] >> 28) & 1)) ^ tw1_c[52];
+  aa[threadIdx.x].b5 ^= bb.b5 ^ (0 - ((k3456[threadIdx.x] >> 29) & 1)) ^ tw1_c[53];
+  aa[threadIdx.x].b6 ^= bb.b6 ^ (0 - ((k3456[threadIdx.x] >> 30) & 1)) ^ tw1_c[54];
+  aa[threadIdx.x].b7 ^= bb.b7 ^ (0 - ((k3456[threadIdx.x] >> 31) & 1)) ^ tw1_c[55];
+  aa[threadIdx.x] = sbox(aa[threadIdx.x]);
+
+  cc.b0 ^= bb.b0 ^ (0 - ((k3456[threadIdx.x] >> 16) & 1)) ^ tw1_c[40];
+  cc.b1 ^= bb.b1 ^ (0 - ((k3456[threadIdx.x] >> 17) & 1)) ^ tw1_c[41];
+  cc.b2 ^= bb.b2 ^ (0 - ((k3456[threadIdx.x] >> 18) & 1)) ^ tw1_c[42];
+  cc.b3 ^= bb.b3 ^ (0 - ((k3456[threadIdx.x] >> 19) & 1)) ^ tw1_c[43];
+  cc.b4 ^= bb.b4 ^ (0 - ((k3456[threadIdx.x] >> 20) & 1)) ^ tw1_c[44];
+  cc.b5 ^= bb.b5 ^ (0 - ((k3456[threadIdx.x] >> 21) & 1)) ^ tw1_c[45];
+  cc.b6 ^= bb.b6 ^ (0 - ((k3456[threadIdx.x] >> 22) & 1)) ^ tw1_c[46];
+  cc.b7 ^= bb.b7 ^ (0 - ((k3456[threadIdx.x] >> 23) & 1)) ^ tw1_c[47];
+  cc = sbox(cc);
+
+  bb.b0 ^= aa[threadIdx.x].b0 ^ cc.b0 ^ (0 - ((k3456[threadIdx.x] >> 8)  & 1)) ^ tw1_c[32];
+  bb.b1 ^= aa[threadIdx.x].b1 ^ cc.b1 ^ (0 - ((k3456[threadIdx.x] >> 9)  & 1)) ^ tw1_c[33];
+  bb.b2 ^= aa[threadIdx.x].b2 ^ cc.b2 ^ (0 - ((k3456[threadIdx.x] >> 10) & 1)) ^ tw1_c[34];
+  bb.b3 ^= aa[threadIdx.x].b3 ^ cc.b3 ^ (0 - ((k3456[threadIdx.x] >> 11) & 1)) ^ tw1_c[35];
+  bb.b4 ^= aa[threadIdx.x].b4 ^ cc.b4 ^ (0 - ((k3456[threadIdx.x] >> 12) & 1)) ^ tw1_c[36];
+  bb.b5 ^= aa[threadIdx.x].b5 ^ cc.b5 ^ (0 - ((k3456[threadIdx.x] >> 13) & 1)) ^ tw1_c[37];
+  bb.b6 ^= aa[threadIdx.x].b6 ^ cc.b6 ^ (0 - ((k3456[threadIdx.x] >> 14) & 1)) ^ tw1_c[38];
+  bb.b7 ^= aa[threadIdx.x].b7 ^ cc.b7 ^ (0 - ((k3456[threadIdx.x] >> 15) & 1)) ^ tw1_c[39];
+  bb = sbox(bb);
+
+  /* Round 5. */
+  aa[threadIdx.x].b0 ^= bb.b0 ^ (0 - ((k3456[threadIdx.x] >> 0) & 1)) ^ tw1_c[24];
+  aa[threadIdx.x].b1 ^= bb.b1 ^ (0 - ((k3456[threadIdx.x] >> 1) & 1)) ^ tw1_c[25];
+  aa[threadIdx.x].b2 ^= bb.b2 ^ (0 - ((k3456[threadIdx.x] >> 2) & 1)) ^ tw1_c[26];
+  aa[threadIdx.x].b3 ^= bb.b3 ^ (0 - ((k3456[threadIdx.x] >> 3) & 1)) ^ tw1_c[27];
+  aa[threadIdx.x].b4 ^= bb.b4 ^ (0 - ((k3456[threadIdx.x] >> 4) & 1)) ^ tw1_c[28];
+  aa[threadIdx.x].b5 ^= bb.b5 ^ (0 - ((k3456[threadIdx.x] >> 5) & 1)) ^ tw1_c[29];
+  aa[threadIdx.x].b6 ^= bb.b6 ^ (0 - ((k3456[threadIdx.x] >> 6) & 1)) ^ tw1_c[30];
+  aa[threadIdx.x].b7 ^= bb.b7 ^ (0 - ((k3456[threadIdx.x] >> 7) & 1)) ^ tw1_c[31];
+  aa[threadIdx.x] = sbox(aa[threadIdx.x]);
+
+  cc.b0 ^= bb.b0 ^ 0xaaaaaaaa                     ^ tw1_c[16];
+  cc.b1 ^= bb.b1 ^ 0xcccccccc                     ^ tw1_c[17];
+  cc.b2 ^= bb.b2 ^ 0xf0f0f0f0                     ^ tw1_c[18];
+  cc.b3 ^= bb.b3 ^ 0xff00ff00                     ^ tw1_c[19];
+  cc.b4 ^= bb.b4 ^ 0xffff0000                     ^ tw1_c[20];
+  cc.b5 ^= bb.b5 ^ (0 -  (threadIdx.x       & 1)) ^ tw1_c[21];
+  cc.b6 ^= bb.b6 ^ (0 - ((threadIdx.x >> 1) & 1)) ^ tw1_c[22];
+  cc.b7 ^= bb.b7 ^ (0 - ((threadIdx.x >> 2) & 1)) ^ tw1_c[23];
+  cc = sbox(cc);
+
+  bb.b0 ^= aa[threadIdx.x].b0 ^ cc.b0 ^ key_c[8]  ^ tw1_c[8];
+  bb.b1 ^= aa[threadIdx.x].b1 ^ cc.b1 ^ key_c[9]  ^ tw1_c[9];
+  bb.b2 ^= aa[threadIdx.x].b2 ^ cc.b2 ^ key_c[10] ^ tw1_c[10];
+  bb.b3 ^= aa[threadIdx.x].b3 ^ cc.b3 ^ key_c[11] ^ tw1_c[11];
+  bb.b4 ^= aa[threadIdx.x].b4 ^ cc.b4 ^ key_c[12] ^ tw1_c[12];
+  bb.b5 ^= aa[threadIdx.x].b5 ^ cc.b5 ^ key_c[13] ^ tw1_c[13];
+  bb.b6 ^= aa[threadIdx.x].b6 ^ cc.b6 ^ key_c[14] ^ tw1_c[14];
+  bb.b7 ^= aa[threadIdx.x].b7 ^ cc.b7 ^ key_c[15] ^ tw1_c[15];
+  bb = sbox(bb);
+
+  /* Round 6. */
+  aa[threadIdx.x].b0 ^= bb.b0 ^ key_c[0] ^ tw1_c[0];
+  aa[threadIdx.x].b1 ^= bb.b1 ^ key_c[1] ^ tw1_c[1];
+  aa[threadIdx.x].b2 ^= bb.b2 ^ key_c[2] ^ tw1_c[2];
+  aa[threadIdx.x].b3 ^= bb.b3 ^ key_c[3] ^ tw1_c[3];
+  aa[threadIdx.x].b4 ^= bb.b4 ^ key_c[4] ^ tw1_c[4];
+  aa[threadIdx.x].b5 ^= bb.b5 ^ key_c[5] ^ tw1_c[5];
+  aa[threadIdx.x].b6 ^= bb.b6 ^ key_c[6] ^ tw1_c[6];
+  aa[threadIdx.x].b7 ^= bb.b7 ^ key_c[7] ^ tw1_c[7];
+  aa[threadIdx.x] = sbox(aa[threadIdx.x]);
+
+  cc.b0 ^= bb.b0 ^ (0 - ((k3456[threadIdx.x] >> 24) & 1)) ^ tw1_c[56];
+  cc.b1 ^= bb.b1 ^ (0 - ((k3456[threadIdx.x] >> 25) & 1)) ^ tw1_c[57];
+  cc.b2 ^= bb.b2 ^ (0 - ((k3456[threadIdx.x] >> 26) & 1)) ^ tw1_c[58];
+  cc.b3 ^= bb.b3 ^ (0 - ((k3456[threadIdx.x] >> 27) & 1)) ^ tw1_c[59];
+  cc.b4 ^= bb.b4 ^ (0 - ((k3456[threadIdx.x] >> 28) & 1)) ^ tw1_c[60];
+  cc.b5 ^= bb.b5 ^ (0 - ((k3456[threadIdx.x] >> 29) & 1)) ^ tw1_c[61];
+  cc.b6 ^= bb.b6 ^ (0 - ((k3456[threadIdx.x] >> 30) & 1)) ^ tw1_c[62];
+  cc.b7 ^= bb.b7 ^ (0 - ((k3456[threadIdx.x] >> 31) & 1)) ^ tw1_c[63];
+  cc = sbox(cc);
+
+  bb.b0 ^= aa[threadIdx.x].b0 ^ cc.b0 ^ (0 - ((k3456[threadIdx.x] >> 16) & 1)) ^ tw1_c[48];
+  bb.b1 ^= aa[threadIdx.x].b1 ^ cc.b1 ^ (0 - ((k3456[threadIdx.x] >> 17) & 1)) ^ tw1_c[49];
+  bb.b2 ^= aa[threadIdx.x].b2 ^ cc.b2 ^ (0 - ((k3456[threadIdx.x] >> 18) & 1)) ^ tw1_c[50];
+  bb.b3 ^= aa[threadIdx.x].b3 ^ cc.b3 ^ (0 - ((k3456[threadIdx.x] >> 19) & 1)) ^ tw1_c[51];
+  bb.b4 ^= aa[threadIdx.x].b4 ^ cc.b4 ^ (0 - ((k3456[threadIdx.x] >> 20) & 1)) ^ tw1_c[52];
+  bb.b5 ^= aa[threadIdx.x].b5 ^ cc.b5 ^ (0 - ((k3456[threadIdx.x] >> 21) & 1)) ^ tw1_c[53];
+  bb.b6 ^= aa[threadIdx.x].b6 ^ cc.b6 ^ (0 - ((k3456[threadIdx.x] >> 22) & 1)) ^ tw1_c[54];
+  bb.b7 ^= aa[threadIdx.x].b7 ^ cc.b7 ^ (0 - ((k3456[threadIdx.x] >> 23) & 1)) ^ tw1_c[55];
+  bb = sbox(bb);
+
+  /* Round 7. */
+  if (rounds > 6) {
+    aa[threadIdx.x].b0 ^= bb.b0 ^ (0 - ((k3456[threadIdx.x] >> 8) & 1))  ^ tw1_c[40];
+    aa[threadIdx.x].b1 ^= bb.b1 ^ (0 - ((k3456[threadIdx.x] >> 9) & 1))  ^ tw1_c[41];
+    aa[threadIdx.x].b2 ^= bb.b2 ^ (0 - ((k3456[threadIdx.x] >> 10) & 1)) ^ tw1_c[42];
+    aa[threadIdx.x].b3 ^= bb.b3 ^ (0 - ((k3456[threadIdx.x] >> 11) & 1)) ^ tw1_c[43];
+    aa[threadIdx.x].b4 ^= bb.b4 ^ (0 - ((k3456[threadIdx.x] >> 12) & 1)) ^ tw1_c[44];
+    aa[threadIdx.x].b5 ^= bb.b5 ^ (0 - ((k3456[threadIdx.x] >> 13) & 1)) ^ tw1_c[45];
+    aa[threadIdx.x].b6 ^= bb.b6 ^ (0 - ((k3456[threadIdx.x] >> 14) & 1)) ^ tw1_c[46];
+    aa[threadIdx.x].b7 ^= bb.b7 ^ (0 - ((k3456[threadIdx.x] >> 15) & 1)) ^ tw1_c[47];
+    aa[threadIdx.x] = sbox(aa[threadIdx.x]);
+
+    cc.b0 ^= bb.b0 ^ (0 - ((k3456[threadIdx.x] >> 0) & 1)) ^ tw1_c[32];
+    cc.b1 ^= bb.b1 ^ (0 - ((k3456[threadIdx.x] >> 1) & 1)) ^ tw1_c[33];
+    cc.b2 ^= bb.b2 ^ (0 - ((k3456[threadIdx.x] >> 2) & 1)) ^ tw1_c[34];
+    cc.b3 ^= bb.b3 ^ (0 - ((k3456[threadIdx.x] >> 3) & 1)) ^ tw1_c[35];
+    cc.b4 ^= bb.b4 ^ (0 - ((k3456[threadIdx.x] >> 4) & 1)) ^ tw1_c[36];
+    cc.b5 ^= bb.b5 ^ (0 - ((k3456[threadIdx.x] >> 5) & 1)) ^ tw1_c[37];
+    cc.b6 ^= bb.b6 ^ (0 - ((k3456[threadIdx.x] >> 6) & 1)) ^ tw1_c[38];
+    cc.b7 ^= bb.b7 ^ (0 - ((k3456[threadIdx.x] >> 7) & 1)) ^ tw1_c[39];
+    cc = sbox(cc);
+
+    bb.b0 ^= aa[threadIdx.x].b0 ^ cc.b0 ^ 0xaaaaaaaa                     ^ tw1_c[24];
+    bb.b1 ^= aa[threadIdx.x].b1 ^ cc.b1 ^ 0xcccccccc                     ^ tw1_c[25];
+    bb.b2 ^= aa[threadIdx.x].b2 ^ cc.b2 ^ 0xf0f0f0f0                     ^ tw1_c[26];
+    bb.b3 ^= aa[threadIdx.x].b3 ^ cc.b3 ^ 0xff00ff00                     ^ tw1_c[27];
+    bb.b4 ^= aa[threadIdx.x].b4 ^ cc.b4 ^ 0xffff0000                     ^ tw1_c[28];
+    bb.b5 ^= aa[threadIdx.x].b5 ^ cc.b5 ^ (0 -  (threadIdx.x       & 1)) ^ tw1_c[29];
+    bb.b6 ^= aa[threadIdx.x].b6 ^ cc.b6 ^ (0 - ((threadIdx.x >> 1) & 1)) ^ tw1_c[30];
+    bb.b7 ^= aa[threadIdx.x].b7 ^ cc.b7 ^ (0 - ((threadIdx.x >> 2) & 1)) ^ tw1_c[31];
+    bb = sbox(bb);
+  }
+
+  /* Round 8. */
+  if (rounds > 7) {
+    aa[threadIdx.x].b0 ^= bb.b0 ^ key_c[8]  ^ tw1_c[16];
+    aa[threadIdx.x].b1 ^= bb.b1 ^ key_c[9]  ^ tw1_c[17];
+    aa[threadIdx.x].b2 ^= bb.b2 ^ key_c[10] ^ tw1_c[18];
+    aa[threadIdx.x].b3 ^= bb.b3 ^ key_c[11] ^ tw1_c[19];
+    aa[threadIdx.x].b4 ^= bb.b4 ^ key_c[12] ^ tw1_c[20];
+    aa[threadIdx.x].b5 ^= bb.b5 ^ key_c[13] ^ tw1_c[21];
+    aa[threadIdx.x].b6 ^= bb.b6 ^ key_c[14] ^ tw1_c[22];
+    aa[threadIdx.x].b7 ^= bb.b7 ^ key_c[15] ^ tw1_c[23];
+    aa[threadIdx.x] = sbox(aa[threadIdx.x]);
+
+    cc.b0 ^= bb.b0 ^ key_c[0] ^ tw1_c[8];
+    cc.b1 ^= bb.b1 ^ key_c[1] ^ tw1_c[9];
+    cc.b2 ^= bb.b2 ^ key_c[2] ^ tw1_c[10];
+    cc.b3 ^= bb.b3 ^ key_c[3] ^ tw1_c[11];
+    cc.b4 ^= bb.b4 ^ key_c[4] ^ tw1_c[12];
+    cc.b5 ^= bb.b5 ^ key_c[5] ^ tw1_c[13];
+    cc.b6 ^= bb.b6 ^ key_c[6] ^ tw1_c[14];
+    cc.b7 ^= bb.b7 ^ key_c[7] ^ tw1_c[15];
+    cc = sbox(cc);
+
+    bb.b0 ^= aa[threadIdx.x].b0 ^ cc.b0 ^ (0 - ((k3456[threadIdx.x] >> 24) & 1)) ^ tw1_c[0];
+    bb.b1 ^= aa[threadIdx.x].b1 ^ cc.b1 ^ (0 - ((k3456[threadIdx.x] >> 25) & 1)) ^ tw1_c[1];
+    bb.b2 ^= aa[threadIdx.x].b2 ^ cc.b2 ^ (0 - ((k3456[threadIdx.x] >> 26) & 1)) ^ tw1_c[2];
+    bb.b3 ^= aa[threadIdx.x].b3 ^ cc.b3 ^ (0 - ((k3456[threadIdx.x] >> 27) & 1)) ^ tw1_c[3];
+    bb.b4 ^= aa[threadIdx.x].b4 ^ cc.b4 ^ (0 - ((k3456[threadIdx.x] >> 28) & 1)) ^ tw1_c[4];
+    bb.b5 ^= aa[threadIdx.x].b5 ^ cc.b5 ^ (0 - ((k3456[threadIdx.x] >> 29) & 1)) ^ tw1_c[5];
+    bb.b6 ^= aa[threadIdx.x].b6 ^ cc.b6 ^ (0 - ((k3456[threadIdx.x] >> 30) & 1)) ^ tw1_c[6];
+    bb.b7 ^= aa[threadIdx.x].b7 ^ cc.b7 ^ (0 - ((k3456[threadIdx.x] >> 31) & 1)) ^ tw1_c[7];
+    bb = sbox(bb);
+  }
+
+  int cmp;
+  cmp  = cc.b0 ^ ct1_c[0];
+  cmp |= cc.b1 ^ ct1_c[1];
+  cmp |= cc.b2 ^ ct1_c[2];
+  cmp |= cc.b3 ^ ct1_c[3];
+  cmp |= cc.b4 ^ ct1_c[4];
+  cmp |= cc.b5 ^ ct1_c[5];
+  cmp |= cc.b6 ^ ct1_c[6];
+  cmp |= cc.b7 ^ ct1_c[7];
+  cmp |= bb.b0 ^ ct1_c[8];
+  cmp |= bb.b1 ^ ct1_c[9];
+  cmp |= bb.b2 ^ ct1_c[10];
+  cmp |= bb.b3 ^ ct1_c[11];
+  cmp |= bb.b4 ^ ct1_c[12];
+  cmp |= bb.b5 ^ ct1_c[13];
+  cmp |= bb.b6 ^ ct1_c[14];
+  cmp |= bb.b7 ^ ct1_c[15];
+  cmp |= aa[threadIdx.x].b0 ^ ct1_c[16];
+  cmp |= aa[threadIdx.x].b1 ^ ct1_c[17];
+  cmp |= aa[threadIdx.x].b2 ^ ct1_c[18];
+  cmp |= aa[threadIdx.x].b3 ^ ct1_c[19];
+  cmp |= aa[threadIdx.x].b4 ^ ct1_c[20];
+  cmp |= aa[threadIdx.x].b5 ^ ct1_c[21];
+  cmp |= aa[threadIdx.x].b6 ^ ct1_c[22];
+  cmp |= aa[threadIdx.x].b7 ^ ct1_c[23];
+  cmp = ~cmp;
+
+  if (cmp != 0) {
+    int resultp = atomicAdd(out, __popc(cmp)) * 2 + 1;
+    while (cmp != 0) {
+      int low5 = __ffs(cmp) - 1;
+      cmp ^= 1 << low5;
+      out[resultp] = k3456[threadIdx.x];
+      out[resultp + 1] = ((threadIdx.x & 7) << 5) | low5;
+      resultp += 2;
+    }
+  }
+
+  found[threadIdx.x] = 0;
+
+  __syncthreads();
+
+  if (cmp != 0) {
+    int resultp = atomicAdd_block(found, __popc(cmp)) * 2 + 1;
+    while (cmp != 0) {
+      int low5 = __ffs(cmp) - 1;
+      cmp ^= 1 << low5;
+      found[resultp] = k3456[threadIdx.x];
+      found[resultp + 1] = ((threadIdx.x & 7) << 5) | low5;
+      resultp += 2;
+    }
+  }
+
+  __syncthreads();
+
+  if (found[0] == 0) {
+    return;
+  }
+
+  if (threadIdx.x == 0) {
+    found[1] = atomicAdd(out, found[0]) * 2 + 1;
+  }
+
+  __syncthreads();
+
+  if (threadIdx.x < (found[0] * 2)) {
+    int ptr = found[1] + threadIdx.x;
+    out[ptr] = found[threadIdx.x + 2];
+  }
+}
+
+__launch_bounds__(1024, 1)
+__global__ void upper_678(int *ret) {
+
+  __shared__ int found[500];
+
+  eightbits aa, bb, cc;
+
+  /* PT1: Round 1. */
+  bb.b0 = pt1_c[8];
+  bb.b1 = pt1_c[9];
+  bb.b2 = pt1_c[10];
+  bb.b3 = pt1_c[11];
+  bb.b4 = pt1_c[12];
+  bb.b5 = pt1_c[13];
+  bb.b6 = pt1_c[14];
+  bb.b7 = pt1_c[15];
+  aa.b0 = pt1_c[16] ^ bb.b0 ^ key_c[8]  ^ tw1_c[56];
+  aa.b1 = pt1_c[17] ^ bb.b1 ^ key_c[9]  ^ tw1_c[57];
+  aa.b2 = pt1_c[18] ^ bb.b2 ^ key_c[10] ^ tw1_c[58];
+  aa.b3 = pt1_c[19] ^ bb.b3 ^ key_c[11] ^ tw1_c[59];
+  aa.b4 = pt1_c[20] ^ bb.b4 ^ key_c[12] ^ tw1_c[60];
+  aa.b5 = pt1_c[21] ^ bb.b5 ^ key_c[13] ^ tw1_c[61];
+  aa.b6 = pt1_c[22] ^ bb.b6 ^ key_c[14] ^ tw1_c[62];
+  aa.b7 = pt1_c[23] ^ bb.b7 ^ key_c[15] ^ tw1_c[63];
+  aa = sbox(aa);
+
+  cc.b0 = pt1_c[0]  ^ bb.b0 ^ key_c[0] ^ tw1_c[48];
+  cc.b1 = pt1_c[1]  ^ bb.b1 ^ key_c[1] ^ tw1_c[49];
+  cc.b2 = pt1_c[2]  ^ bb.b2 ^ key_c[2] ^ tw1_c[50];
+  cc.b3 = pt1_c[3]  ^ bb.b3 ^ key_c[3] ^ tw1_c[51];
+  cc.b4 = pt1_c[4]  ^ bb.b4 ^ key_c[4] ^ tw1_c[52];
+  cc.b5 = pt1_c[5]  ^ bb.b5 ^ key_c[5] ^ tw1_c[53];
+  cc.b6 = pt1_c[6]  ^ bb.b6 ^ key_c[6] ^ tw1_c[54];
+  cc.b7 = pt1_c[7]  ^ bb.b7 ^ key_c[7] ^ tw1_c[55];
+  cc = sbox(cc);
+
+  bb.b0 ^= aa.b0  ^ cc.b0 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 0) & 1)) ^ tw1_c[40];
+  bb.b1 ^= aa.b1  ^ cc.b1 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 1) & 1)) ^ tw1_c[41];
+  bb.b2 ^= aa.b2  ^ cc.b2 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 2) & 1)) ^ tw1_c[42];
+  bb.b3 ^= aa.b3  ^ cc.b3 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 3) & 1)) ^ tw1_c[43];
+  bb.b4 ^= aa.b4  ^ cc.b4 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 4) & 1)) ^ tw1_c[44];
+  bb.b5 ^= aa.b5  ^ cc.b5 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 5) & 1)) ^ tw1_c[45];
+  bb.b6 ^= aa.b6  ^ cc.b6 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 6) & 1)) ^ tw1_c[46];
+  bb.b7 ^= aa.b7  ^ cc.b7 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 7) & 1)) ^ tw1_c[47];
+  bb = sbox(bb);
+
+  /* PT1: Round 2. */
+  aa.b0 ^= bb.b0 ^ (0 - ((blockIdx.x  >> 1) & 1)) ^ tw1_c[32];
+  aa.b1 ^= bb.b1 ^ (0 - ((blockIdx.x  >> 2) & 1)) ^ tw1_c[33];
+  aa.b2 ^= bb.b2 ^ (0 - ((blockIdx.x  >> 3) & 1)) ^ tw1_c[34];
+  aa.b3 ^= bb.b3 ^ (0 - ((blockIdx.x  >> 4) & 1)) ^ tw1_c[35];
+  aa.b4 ^= bb.b4 ^ (0 - ((blockIdx.x  >> 5) & 1)) ^ tw1_c[36];
+  aa.b5 ^= bb.b5 ^ (0 - ((blockIdx.x  >> 6) & 1)) ^ tw1_c[37];
+  aa.b6 ^= bb.b6 ^ (0 - ((blockIdx.x  >> 7) & 1)) ^ tw1_c[38];
+  aa.b7 ^= bb.b7 ^ (0 - ((blockIdx.x  >> 8) & 1)) ^ tw1_c[39];
+  aa = sbox(aa);
+
+  cc.b0 ^= bb.b0 ^ (0 - ((threadIdx.x >> 3) & 1)) ^ tw1_c[24];
+  cc.b1 ^= bb.b1 ^ (0 - ((threadIdx.x >> 4) & 1)) ^ tw1_c[25];
+  cc.b2 ^= bb.b2 ^ (0 - ((threadIdx.x >> 5) & 1)) ^ tw1_c[26];
+  cc.b3 ^= bb.b3 ^ (0 - ((threadIdx.x >> 6) & 1)) ^ tw1_c[27];
+  cc.b4 ^= bb.b4 ^ (0 - ((threadIdx.x >> 7) & 1)) ^ tw1_c[28];
+  cc.b5 ^= bb.b5 ^ (0 - ((threadIdx.x >> 8) & 1)) ^ tw1_c[29];
+  cc.b6 ^= bb.b6 ^ (0 - ((threadIdx.x >> 9) & 1)) ^ tw1_c[30];
+  cc.b7 ^= bb.b7 ^ (0 -  (blockIdx.x        & 1)) ^ tw1_c[31];
+  cc = sbox(cc);
+
+  bb.b0 ^= aa.b0 ^ cc.b0 ^ 0xaaaaaaaa                     ^ tw1_c[16];
+  bb.b1 ^= aa.b1 ^ cc.b1 ^ 0xcccccccc                     ^ tw1_c[17];
+  bb.b2 ^= aa.b2 ^ cc.b2 ^ 0xf0f0f0f0                     ^ tw1_c[18];
+  bb.b3 ^= aa.b3 ^ cc.b3 ^ 0xff00ff00                     ^ tw1_c[19];
+  bb.b4 ^= aa.b4 ^ cc.b4 ^ 0xffff0000                     ^ tw1_c[20];
+  bb.b5 ^= aa.b5 ^ cc.b5 ^ (0 - ((threadIdx.x >> 0) & 1)) ^ tw1_c[21];
+  bb.b6 ^= aa.b6 ^ cc.b6 ^ (0 - ((threadIdx.x >> 1) & 1)) ^ tw1_c[22];
+  bb.b7 ^= aa.b7 ^ cc.b7 ^ (0 - ((threadIdx.x >> 2) & 1)) ^ tw1_c[23];
+  bb = sbox(bb);
+
+  /* PT1: Round 3c. */
+  cc.b0 ^= bb.b0 ^ key_c[8]  ^ tw1_c[0];
+  cc.b1 ^= bb.b1 ^ key_c[9]  ^ tw1_c[1];
+  cc.b2 ^= bb.b2 ^ key_c[10] ^ tw1_c[2];
+  cc.b3 ^= bb.b3 ^ key_c[11] ^ tw1_c[3];
+  cc.b4 ^= bb.b4 ^ key_c[12] ^ tw1_c[4];
+  cc.b5 ^= bb.b5 ^ key_c[13] ^ tw1_c[5];
+  cc.b6 ^= bb.b6 ^ key_c[14] ^ tw1_c[6];
+  cc.b7 ^= bb.b7 ^ key_c[15] ^ tw1_c[7];
+  cc = sbox(cc);
+
+  eightbits xx;
+  xx.b0 = cc.b0 ^ tw1_c[24] ^ tw2_c[24];
+  xx.b1 = cc.b1 ^ tw1_c[25] ^ tw2_c[25];
+  xx.b2 = cc.b2 ^ tw1_c[26] ^ tw2_c[26];
+  xx.b3 = cc.b3 ^ tw1_c[27] ^ tw2_c[27];
+  xx.b4 = cc.b4 ^ tw1_c[28] ^ tw2_c[28];
+  xx.b5 = cc.b5 ^ tw1_c[29] ^ tw2_c[29];
+  xx.b6 = cc.b6 ^ tw1_c[30] ^ tw2_c[30];
+  xx.b7 = cc.b7 ^ tw1_c[31] ^ tw2_c[31];
+
+  /* PT2: Round 1. */
+  bb.b0 = pt2_c[8];
+  bb.b1 = pt2_c[9];
+  bb.b2 = pt2_c[10];
+  bb.b3 = pt2_c[11];
+  bb.b4 = pt2_c[12];
+  bb.b5 = pt2_c[13];
+  bb.b6 = pt2_c[14];
+  bb.b7 = pt2_c[15];
+  aa.b0 = pt2_c[16] ^ bb.b0 ^ key_c[8]  ^ tw2_c[56];
+  aa.b1 = pt2_c[17] ^ bb.b1 ^ key_c[9]  ^ tw2_c[57];
+  aa.b2 = pt2_c[18] ^ bb.b2 ^ key_c[10] ^ tw2_c[58];
+  aa.b3 = pt2_c[19] ^ bb.b3 ^ key_c[11] ^ tw2_c[59];
+  aa.b4 = pt2_c[20] ^ bb.b4 ^ key_c[12] ^ tw2_c[60];
+  aa.b5 = pt2_c[21] ^ bb.b5 ^ key_c[13] ^ tw2_c[61];
+  aa.b6 = pt2_c[22] ^ bb.b6 ^ key_c[14] ^ tw2_c[62];
+  aa.b7 = pt2_c[23] ^ bb.b7 ^ key_c[15] ^ tw2_c[63];
+  aa = sbox(aa);
+
+  cc.b0 = pt2_c[0]  ^ bb.b0 ^ key_c[0] ^ tw2_c[48];
+  cc.b1 = pt2_c[1]  ^ bb.b1 ^ key_c[1] ^ tw2_c[49];
+  cc.b2 = pt2_c[2]  ^ bb.b2 ^ key_c[2] ^ tw2_c[50];
+  cc.b3 = pt2_c[3]  ^ bb.b3 ^ key_c[3] ^ tw2_c[51];
+  cc.b4 = pt2_c[4]  ^ bb.b4 ^ key_c[4] ^ tw2_c[52];
+  cc.b5 = pt2_c[5]  ^ bb.b5 ^ key_c[5] ^ tw2_c[53];
+  cc.b6 = pt2_c[6]  ^ bb.b6 ^ key_c[6] ^ tw2_c[54];
+  cc.b7 = pt2_c[7]  ^ bb.b7 ^ key_c[7] ^ tw2_c[55];
+  cc = sbox(cc);
+
+  bb.b0 ^= aa.b0  ^ cc.b0 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 0) & 1)) ^ tw2_c[40];
+  bb.b1 ^= aa.b1  ^ cc.b1 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 1) & 1)) ^ tw2_c[41];
+  bb.b2 ^= aa.b2  ^ cc.b2 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 2) & 1)) ^ tw2_c[42];
+  bb.b3 ^= aa.b3  ^ cc.b3 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 3) & 1)) ^ tw2_c[43];
+  bb.b4 ^= aa.b4  ^ cc.b4 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 4) & 1)) ^ tw2_c[44];
+  bb.b5 ^= aa.b5  ^ cc.b5 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 5) & 1)) ^ tw2_c[45];
+  bb.b6 ^= aa.b6  ^ cc.b6 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 6) & 1)) ^ tw2_c[46];
+  bb.b7 ^= aa.b7  ^ cc.b7 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 7) & 1)) ^ tw2_c[47];
+  bb = sbox(bb);
+
+  /* PT2: Round 2. */
+  aa.b0 ^= bb.b0 ^ (0 - ((blockIdx.x  >> 1) & 1)) ^ tw2_c[32];
+  aa.b1 ^= bb.b1 ^ (0 - ((blockIdx.x  >> 2) & 1)) ^ tw2_c[33];
+  aa.b2 ^= bb.b2 ^ (0 - ((blockIdx.x  >> 3) & 1)) ^ tw2_c[34];
+  aa.b3 ^= bb.b3 ^ (0 - ((blockIdx.x  >> 4) & 1)) ^ tw2_c[35];
+  aa.b4 ^= bb.b4 ^ (0 - ((blockIdx.x  >> 5) & 1)) ^ tw2_c[36];
+  aa.b5 ^= bb.b5 ^ (0 - ((blockIdx.x  >> 6) & 1)) ^ tw2_c[37];
+  aa.b6 ^= bb.b6 ^ (0 - ((blockIdx.x  >> 7) & 1)) ^ tw2_c[38];
+  aa.b7 ^= bb.b7 ^ (0 - ((blockIdx.x  >> 8) & 1)) ^ tw2_c[39];
+  aa = sbox(aa);
+
+  cc.b0 ^= bb.b0 ^ (0 - ((threadIdx.x >> 3) & 1)) ^ tw2_c[24];
+  cc.b1 ^= bb.b1 ^ (0 - ((threadIdx.x >> 4) & 1)) ^ tw2_c[25];
+  cc.b2 ^= bb.b2 ^ (0 - ((threadIdx.x >> 5) & 1)) ^ tw2_c[26];
+  cc.b3 ^= bb.b3 ^ (0 - ((threadIdx.x >> 6) & 1)) ^ tw2_c[27];
+  cc.b4 ^= bb.b4 ^ (0 - ((threadIdx.x >> 7) & 1)) ^ tw2_c[28];
+  cc.b5 ^= bb.b5 ^ (0 - ((threadIdx.x >> 8) & 1)) ^ tw2_c[29];
+  cc.b6 ^= bb.b6 ^ (0 - ((threadIdx.x >> 9) & 1)) ^ tw2_c[30];
+  cc.b7 ^= bb.b7 ^ (0 -  (blockIdx.x        & 1)) ^ tw2_c[31];
+  cc = sbox(cc);
+
+  bb.b0 ^= aa.b0 ^ cc.b0 ^ 0xaaaaaaaa                     ^ tw2_c[16];
+  bb.b1 ^= aa.b1 ^ cc.b1 ^ 0xcccccccc                     ^ tw2_c[17];
+  bb.b2 ^= aa.b2 ^ cc.b2 ^ 0xf0f0f0f0                     ^ tw2_c[18];
+  bb.b3 ^= aa.b3 ^ cc.b3 ^ 0xff00ff00                     ^ tw2_c[19];
+  bb.b4 ^= aa.b4 ^ cc.b4 ^ 0xffff0000                     ^ tw2_c[20];
+  bb.b5 ^= aa.b5 ^ cc.b5 ^ (0 - ((threadIdx.x >> 0) & 1)) ^ tw2_c[21];
+  bb.b6 ^= aa.b6 ^ cc.b6 ^ (0 - ((threadIdx.x >> 1) & 1)) ^ tw2_c[22];
+  bb.b7 ^= aa.b7 ^ cc.b7 ^ (0 - ((threadIdx.x >> 2) & 1)) ^ tw2_c[23];
+  bb = sbox(bb);
+
+  /* PT2: Round 3c. */
+  cc.b0 ^= bb.b0 ^ key_c[8]  ^ tw2_c[0];
+  cc.b1 ^= bb.b1 ^ key_c[9]  ^ tw2_c[1];
+  cc.b2 ^= bb.b2 ^ key_c[10] ^ tw2_c[2];
+  cc.b3 ^= bb.b3 ^ key_c[11] ^ tw2_c[3];
+  cc.b4 ^= bb.b4 ^ key_c[12] ^ tw2_c[4];
+  cc.b5 ^= bb.b5 ^ key_c[13] ^ tw2_c[5];
+  cc.b6 ^= bb.b6 ^ key_c[14] ^ tw2_c[6];
+  cc.b7 ^= bb.b7 ^ key_c[15] ^ tw2_c[7];
+  cc = sbox(cc);
+
+  int rr;
+  rr  = cc.b0 ^ xx.b0;
+  rr |= cc.b1 ^ xx.b1;
+  rr |= cc.b2 ^ xx.b2;
+  rr |= cc.b3 ^ xx.b3;
+  rr |= cc.b4 ^ xx.b4;
+  rr |= cc.b5 ^ xx.b5;
+  rr |= cc.b6 ^ xx.b6;
+  rr |= cc.b7 ^ xx.b7;
+  rr = ~rr;
+
+  if (threadIdx.x < 32) {
+    found[threadIdx.x] = 0;
+  }
+
+  __syncthreads();
+
+  if (rr != 0) {
+    int ptr = atomicAdd_block(found, __popc(rr));
+    int k3456 = (key3_c[blockIdx.x >> 9] << 24) | ((blockIdx.x & 0x1ff) << 15) | (threadIdx.x << 5);
+    while (rr != 0) {
+      int low5 = __ffs(rr) - 1;
+      rr ^= 1 << low5;
+      found[ptr + 2] = k3456 | low5;
+      ptr += 1;
+    }
+  }
+
+  __syncthreads();
+
+  if (found[0] == 0) {
+    return;
+  }
+
+  if (threadIdx.x == 0) {
+    found[1] = atomicAdd(ret, found[0]) + 1;
+  }
+
+  __syncthreads();
+
+  if (threadIdx.x < found[0]) {
+    int ptr = found[1] + threadIdx.x;
+    ret[ptr] = found[threadIdx.x + 2];
+  }
+}
+
+/* Host functions. */
+
+void list_cuda_devices() {
+  int count = -1;
+  cudaError_t err;
+  err = cudaGetDeviceCount(&count);
+  if (err == 30 || count == 0) {
+    printf("No CUDA devices found.\n");
+    return;
+  }
+  if (err != 0) {
+    fprintf(stderr, "Error: cudaGetDeviceCount returned error %d.\n", err);
+    return;
+  }
+  for (int i = 0; i < count; i++) {
+    cudaDeviceProp prop;
+    err = cudaGetDeviceProperties(&prop, i);
+    if (err != 0) {
+      printf("Error when getting properties for device %d.\n", i);
+    } else {
+      printf("CUDA Device %d: %s\n", i, prop.name);
+    }
+  }
+}
+
+int get_num_cuda_devices() {
+  int count;
+  cudaError_t err;
+  err = cudaGetDeviceCount(&count);
+  if (err == 30) {
+    return 0;
+  }
+  if (err != 0) {
+    return -1;
+  }
+  return count;
+}
+
+#define CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem)\
+  if (err != cudaSuccess) {\
+    fprintf(stderr, "CUDA error. (%s:%d)\n", __FILE__, __LINE__);\
+    if (stream != NULL) { cudaStreamDestroy(stream); }\
+    if (ret != NULL) { cudaFreeHost(ret); }\
+    if (dev_mem != NULL) { cudaFree(dev_mem); }\
+    return;\
+  }
+
+void cuda_678(worker_param_t params, uint32_t threadid, uint32_t cuda_device) {
+
+  uint32_t *ret = NULL;
+  int32_t *dev_mem = NULL;
+  int32_t *dev_mem2 = NULL;
+  cudaStream_t stream = NULL;
+
+  cudaError_t err = cudaSetDevice(cuda_device);
+  CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+
+  /* Allocate host memory. */
+  err = cudaHostAlloc(&ret, sizeof(int32_t) * 0x4000000, cudaHostAllocDefault);
+  CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+  assert(ret != NULL);
+
+  /* Allocate device memory. */
+
+  err = cudaMalloc(&dev_mem, sizeof(int32_t) * 0x4000000);
+  CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+  err = cudaMalloc(&dev_mem2, sizeof(int32_t) * 1000); /* FIXME!! */
+  CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+  assert(dev_mem != NULL);
+  assert(dev_mem2 != NULL);
+
+  err = cudaStreamCreate(&stream);
+  CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+
+  uint32_t k12;
+  pair_t *pair;
+  int32_t hi_key_bits[24];
+  int32_t pt1_bits[24];
+  int32_t pt2_bits[24];
+  int32_t ct1_bits[24];
+  int32_t tw1_bits[64];
+  int32_t tw2_bits[64];
+
+  while (!g_exit && get_next_678(threadid, &k12, &pair)) {
+
+    /* Set plaintext, tweak and high key bits. */
+    for (int bit = 0; bit < 24; bit++) {
+      hi_key_bits[bit] = 0 - ((k12 >> bit) & 1);
+      pt1_bits[bit]    = 0 - ((pair->t1.pt >> bit) & 1);
+      pt2_bits[bit]    = 0 - ((pair->t2.pt >> bit) & 1);
+      ct1_bits[bit]    = 0 - ((pair->t1.ct >> bit) & 1);
+    }
+    for (int bit = 0; bit < 64; bit++) {
+      tw1_bits[bit] = 0 - ((pair->t1.tw >> bit) & 1);
+      tw2_bits[bit] = 0 - ((pair->t2.tw >> bit) & 1);
+    }
+
+    err = cudaMemcpyToSymbolAsync(key_c, hi_key_bits, sizeof(int32_t) * 24, 0,
+        cudaMemcpyHostToDevice, stream);
+    CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+    err = cudaMemcpyToSymbolAsync(pt1_c, pt1_bits,    sizeof(int32_t) * 24, 0,
+        cudaMemcpyHostToDevice, stream);
+    CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+    err = cudaMemcpyToSymbolAsync(pt2_c, pt2_bits,    sizeof(int32_t) * 24, 0,
+        cudaMemcpyHostToDevice, stream);
+    CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+    err = cudaMemcpyToSymbolAsync(ct1_c, ct1_bits,    sizeof(int32_t) * 24, 0,
+        cudaMemcpyHostToDevice, stream);
+    CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+    err = cudaMemcpyToSymbolAsync(tw1_c, tw1_bits,    sizeof(int32_t) * 64, 0,
+        cudaMemcpyHostToDevice, stream);
+    CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+    err = cudaMemcpyToSymbolAsync(tw2_c, tw2_bits,    sizeof(int32_t) * 64, 0,
+        cudaMemcpyHostToDevice, stream);
+    CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+    err = cudaMemcpyToSymbolAsync(key3_c, pair->k3,   sizeof(int32_t) * 256, 0,
+        cudaMemcpyHostToDevice, stream);
+
+    err = cudaMemsetAsync(dev_mem, 0, sizeof(int32_t) * 2000, stream);
+    CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+    err = cudaMemsetAsync(dev_mem2, 0, sizeof(int32_t) * 1000, stream);
+    CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+
+    upper_678<<<512 * pair->num_k3, 1024, 0, stream>>>(dev_mem);
+    err = cudaMemcpyAsync(ret, dev_mem, sizeof(int32_t) * 1, cudaMemcpyDefault, stream);
+    CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+
+    err = cudaStreamSynchronize(stream);
+    CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+
+    int num_blocks = (ret[0] + 129) / 128;
+    switch (params.nrounds) {
+      case 6:
+        test_candidates<6><<<num_blocks, 1024, 0, stream>>>(dev_mem, dev_mem2, ret[0]);
+        break;
+      case 7:
+        test_candidates<7><<<num_blocks, 1024, 0, stream>>>(dev_mem, dev_mem2, ret[0]);
+        break;
+      case 8:
+        test_candidates<8><<<num_blocks, 1024, 0, stream>>>(dev_mem, dev_mem2, ret[0]);
+        break;
+      default:
+        assert(0);
+    }
+    err = cudaMemcpyAsync(ret, dev_mem2, sizeof(int32_t) * 1000, cudaMemcpyDefault, stream);
+    CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+
+    err = cudaStreamSynchronize(stream);
+    CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+
+    for (int i = 0; i < ret[0]; i++) {
+      uint64_t key = ((uint64_t)k12 << 40) | ((uint64_t)ret[i * 2 + 1] << 8) | ret[i * 2 + 2];
+      if (test_key(params.nrounds, key, params.tuples, params.num_tuples)) {
+        found_key(key);
+      }
+    }
+  }
+
+  cudaDeviceSynchronize();
+  cudaProfilerStop();
+  cudaStreamDestroy(stream);
+  cudaFreeHost(ret);
+  cudaFree(dev_mem);
+  cudaFree(dev_mem2);
+  cudaDeviceReset();
+}
+
+void cuda_brute_8(worker_param_t params, uint32_t threadid, uint32_t cuda_device) {
+  uint32_t *ret = NULL;
+  int32_t *dev_mem = NULL;
+  cudaStream_t stream = NULL;
+
+  cudaError_t err = cudaSetDevice(cuda_device);
+  CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+
+  /* Allocate host memory. */
+  err = cudaHostAlloc(&ret, sizeof(int32_t) * 2000, cudaHostAllocDefault);
+  CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+  assert(ret != NULL);
+
+  /* Allocate device memory. */
+  err = cudaMalloc(&dev_mem, sizeof(int32_t) * 2000);
+  CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+  assert(dev_mem != NULL);
+
+  err = cudaStreamCreate(&stream);
+  CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+
+  uint32_t k12;
+  pair_t *pair;
+  int32_t hi_key_bits[24];
+  int32_t pt1_bits[24];
+  int32_t ct1_bits[24];
+  int32_t tw1_bits[64];
+
+  while (!g_exit && get_next_678(threadid, &k12, &pair)) {
+    for (int k3 = 0; !g_exit && k3 < 0x100; k3++) {
+      uint64_t k123 = (k12 << 8) | k3;
+      uint32_t ct1p = dec_one_round_3(pair->t1.ct, k123 ^ (pair->t1.tw & 0xffffff));
+      uint32_t pt1p = enc_one_round_3(pair->t1.pt, k123 ^ (pair->t1.tw >> 40));
+      uint32_t ca = ct1p >> 16;
+      uint32_t cb = (ct1p >> 8) & 0xff;
+      uint32_t cc = ct1p & 0xff;
+      uint32_t pb = g_sbox_dec[cb] ^ ca ^ cc;
+      uint32_t pc = g_sbox_dec[cc];
+      uint32_t pa = g_sbox_dec[ca];
+      ct1p = (pa << 16) | (pb << 8) | pc;
+
+      /* Set plaintext, tweak and high key bits. */
+      for (int bit = 0; bit < 24; bit++) {
+        hi_key_bits[bit] = 0 - ((k123 >> bit) & 1);
+        pt1_bits[bit]    = 0 - ((pt1p >> bit) & 1);
+        ct1_bits[bit]    = 0 - ((ct1p >> bit) & 1);
+      }
+      for (int bit = 0; bit < 64; bit++) {
+        tw1_bits[bit] = 0 - ((pair->t1.tw >> bit) & 1);
+      }
+
+      err = cudaMemcpyToSymbolAsync(key_c, hi_key_bits, sizeof(int32_t) * 24, 0,
+          cudaMemcpyHostToDevice, stream);
+      CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+      err = cudaMemcpyToSymbolAsync(pt1_c, pt1_bits,    sizeof(int32_t) * 24, 0,
+          cudaMemcpyHostToDevice, stream);
+      CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+      err = cudaMemcpyToSymbolAsync(ct1_c, ct1_bits,    sizeof(int32_t) * 24, 0,
+          cudaMemcpyHostToDevice, stream);
+      CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+      err = cudaMemcpyToSymbolAsync(tw1_c, tw1_bits,    sizeof(int32_t) * 64, 0,
+          cudaMemcpyHostToDevice, stream);
+      CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+
+      err = cudaMemsetAsync(dev_mem, 0, sizeof(int32_t) * 2000, stream);
+      CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+
+      brute_force_8<<<0x20000, 1024, 0, stream>>>(dev_mem, 0);
+
+      err = cudaMemcpyAsync(ret, dev_mem, sizeof(int32_t) * 2000, cudaMemcpyDefault, stream);
+      CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+
+      err = cudaStreamSynchronize(stream);
+      CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+
+      uint64_t bkey = k123 << 32;
+      for (int i = 0; i < ret[0]; i++) {
+        uint64_t key = bkey | (ret[i * 2 + 1] << 5);
+        uint32_t xx = ~ret[i * 2 + 2];
+        while (xx != 0) {
+          uint64_t lkey = (__builtin_ffs(xx) - 1) | key;
+          if (test_key(params.nrounds, lkey, params.tuples, params.num_tuples)) {
+            found_key(lkey);
+          }
+          xx ^= 1 << (lkey & 0x1f);
+        }
+      }
+    }
+  }
+
+  cudaDeviceSynchronize();
+  cudaProfilerStop();
+  cudaStreamDestroy(stream);
+  cudaFreeHost(ret);
+  cudaFree(dev_mem);
+  cudaDeviceReset();
+}
