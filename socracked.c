@@ -730,7 +730,7 @@ exit678:
 void *cuda_crack(void *p, bool brute) {
   worker_param_t params = *((worker_param_t*)p);
   assert(params.num_tuples > 1);
-  assert(params.nrounds > 5 && params.nrounds < 9);
+  assert(params.nrounds > 5 && params.nrounds <= 16);
 
   pthread_mutex_lock(&g_threadcount_lock);
   uint32_t threadid = g_threadcount++;
@@ -1277,17 +1277,17 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  /* Perform filtering step when cracking 5-8 rounds. */
-  if (worker_params.nrounds > 5 && worker_params.nrounds <= 8) {
-    set_status("Filtering pairs. ");
-    draw_foreground(start_time, psuccess, worker_params.nrounds, screen, false);
-
     if (!init_pairs(&g_pairs)) {
       /* init_pairs has printed an error message. */
       free(worker_params.tuples);
       cleanup_globals();
       return 1;
     }
+
+  /* Perform filtering step when cracking 5-8 rounds. */
+  if (worker_params.nrounds > 5 && worker_params.nrounds <= 8) {
+    set_status("Filtering pairs. ");
+    draw_foreground(start_time, psuccess, worker_params.nrounds, screen, false);
 
     pair_t pair;
     for (uint16_t i = 0; i < 0x100; i++) {
