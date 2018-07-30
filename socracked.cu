@@ -1,5 +1,7 @@
 /* socracked.cu
 
+   CUDA bitslice implementation of attacks on SoCracked.
+
    Copyright (C) 2018 Marcus Dansarie <marcus@dansarie.se>
 
    This program is free software: you can redistribute it and/or modify
@@ -373,6 +375,9 @@ __device__ __forceinline__ int s7(eightbits in) {
   return out7;
 }
 
+/* Bitsliced single round encryption. Used by the brute force search algorithm
+   in an unrolled loop. */
+template <bool last>
 __device__ __forceinline__ twentyfourbits encrypt_round(twentyfourbits bits, int round,
     volatile const int * __restrict key_hi) {
 
@@ -381,431 +386,334 @@ __device__ __forceinline__ twentyfourbits encrypt_round(twentyfourbits bits, int
 
   eightbits cur;
 
-  switch (round) {
+  /* Calculate round tweak offsets. */
+  int tw_off_a, tw_off_b, tw_off_c;
+  switch (round % 8) {
+    case 0:
+      tw_off_a = 16;
+      tw_off_c = 8;
+      tw_off_b = 0;
+      break;
+    case 1:
+      tw_off_a = 56;
+      tw_off_c = 48;
+      tw_off_b = 40;
+      break;
     case 2:
-      cur.b7 = (0 - ((bidx >> 16) & 1)) ^ tw1_c[39] ^ bits.b.b7 ^ bits.a.b7;
-      cur.b6 = (0 - ((bidx >> 15) & 1)) ^ tw1_c[38] ^ bits.b.b6 ^ bits.a.b6;
-      cur.b5 = (0 - ((bidx >> 14) & 1)) ^ tw1_c[37] ^ bits.b.b5 ^ bits.a.b5;
-      cur.b4 = (0 - ((bidx >> 13) & 1)) ^ tw1_c[36] ^ bits.b.b4 ^ bits.a.b4;
-      cur.b3 = (0 - ((bidx >> 12) & 1)) ^ tw1_c[35] ^ bits.b.b3 ^ bits.a.b3;
-      cur.b2 = (0 - ((bidx >> 11) & 1)) ^ tw1_c[34] ^ bits.b.b2 ^ bits.a.b2;
-      cur.b1 = (0 - ((bidx >> 10) & 1)) ^ tw1_c[33] ^ bits.b.b1 ^ bits.a.b1;
-      cur.b0 = (0 - ((bidx >> 9)  & 1)) ^ tw1_c[32] ^ bits.b.b0 ^ bits.a.b0;
+      tw_off_a = 32;
+      tw_off_c = 24;
+      tw_off_b = 16;
       break;
     case 3:
-      cur.b7 = (0 - ((tidx >> 2)  & 1)) ^ tw1_c[15] ^ bits.b.b7 ^ bits.a.b7;
-      cur.b6 = (0 - ((tidx >> 1)  & 1)) ^ tw1_c[14] ^ bits.b.b6 ^ bits.a.b6;
-      cur.b5 = (0 -  (tidx        & 1)) ^ tw1_c[13] ^ bits.b.b5 ^ bits.a.b5;
-      cur.b4 = 0xffff0000               ^ tw1_c[12] ^ bits.b.b4 ^ bits.a.b4;
-      cur.b3 = 0xff00ff00               ^ tw1_c[11] ^ bits.b.b3 ^ bits.a.b3;
-      cur.b2 = 0xf0f0f0f0               ^ tw1_c[10] ^ bits.b.b2 ^ bits.a.b2;
-      cur.b1 = 0xcccccccc               ^ tw1_c[9]  ^ bits.b.b1 ^ bits.a.b1;
-      cur.b0 = 0xaaaaaaaa               ^ tw1_c[8]  ^ bits.b.b0 ^ bits.a.b0;
+      tw_off_a = 8;
+      tw_off_c = 0;
+      tw_off_b = 56;
       break;
     case 4:
-      cur.b7 = key_hi[7]                ^ tw1_c[55] ^ bits.b.b7 ^ bits.a.b7;
-      cur.b6 = key_hi[6]                ^ tw1_c[54] ^ bits.b.b6 ^ bits.a.b6;
-      cur.b5 = key_hi[5]                ^ tw1_c[53] ^ bits.b.b5 ^ bits.a.b5;
-      cur.b4 = key_hi[4]                ^ tw1_c[52] ^ bits.b.b4 ^ bits.a.b4;
-      cur.b3 = key_hi[3]                ^ tw1_c[51] ^ bits.b.b3 ^ bits.a.b3;
-      cur.b2 = key_hi[2]                ^ tw1_c[50] ^ bits.b.b2 ^ bits.a.b2;
-      cur.b1 = key_hi[1]                ^ tw1_c[49] ^ bits.b.b1 ^ bits.a.b1;
-      cur.b0 = key_hi[0]                ^ tw1_c[48] ^ bits.b.b0 ^ bits.a.b0;
+      tw_off_a = 48;
+      tw_off_c = 40;
+      tw_off_b = 32;
       break;
     case 5:
-      cur.b7 = (0 -  (bidx        & 1)) ^ tw1_c[31] ^ bits.b.b7 ^ bits.a.b7;
-      cur.b6 = (0 - ((tidx >> 9)  & 1)) ^ tw1_c[30] ^ bits.b.b6 ^ bits.a.b6;
-      cur.b5 = (0 - ((tidx >> 8)  & 1)) ^ tw1_c[29] ^ bits.b.b5 ^ bits.a.b5;
-      cur.b4 = (0 - ((tidx >> 7)  & 1)) ^ tw1_c[28] ^ bits.b.b4 ^ bits.a.b4;
-      cur.b3 = (0 - ((tidx >> 6)  & 1)) ^ tw1_c[27] ^ bits.b.b3 ^ bits.a.b3;
-      cur.b2 = (0 - ((tidx >> 5)  & 1)) ^ tw1_c[26] ^ bits.b.b2 ^ bits.a.b2;
-      cur.b1 = (0 - ((tidx >> 4)  & 1)) ^ tw1_c[25] ^ bits.b.b1 ^ bits.a.b1;
-      cur.b0 = (0 - ((tidx >> 3)  & 1)) ^ tw1_c[24] ^ bits.b.b0 ^ bits.a.b0;
+      tw_off_a = 24;
+      tw_off_c = 16;
+      tw_off_b = 8;
       break;
     case 6:
-      cur.b7 = key_hi[15]               ^ tw1_c[7]  ^ bits.b.b7 ^ bits.a.b7;
-      cur.b6 = key_hi[14]               ^ tw1_c[6]  ^ bits.b.b6 ^ bits.a.b6;
-      cur.b5 = key_hi[13]               ^ tw1_c[5]  ^ bits.b.b5 ^ bits.a.b5;
-      cur.b4 = key_hi[12]               ^ tw1_c[4]  ^ bits.b.b4 ^ bits.a.b4;
-      cur.b3 = key_hi[11]               ^ tw1_c[3]  ^ bits.b.b3 ^ bits.a.b3;
-      cur.b2 = key_hi[10]               ^ tw1_c[2]  ^ bits.b.b2 ^ bits.a.b2;
-      cur.b1 = key_hi[9]                ^ tw1_c[1]  ^ bits.b.b1 ^ bits.a.b1;
-      cur.b0 = key_hi[8]                ^ tw1_c[0]  ^ bits.b.b0 ^ bits.a.b0;
+      tw_off_a = 0;
+      tw_off_c = 56;
+      tw_off_b = 48;
       break;
     case 7:
-      cur.b7 = (0 - ((bidx >> 8)  & 1)) ^ tw1_c[47] ^ bits.b.b7 ^ bits.a.b7;
-      cur.b6 = (0 - ((bidx >> 7)  & 1)) ^ tw1_c[46] ^ bits.b.b6 ^ bits.a.b6;
-      cur.b5 = (0 - ((bidx >> 6)  & 1)) ^ tw1_c[45] ^ bits.b.b5 ^ bits.a.b5;
-      cur.b4 = (0 - ((bidx >> 5)  & 1)) ^ tw1_c[44] ^ bits.b.b4 ^ bits.a.b4;
-      cur.b3 = (0 - ((bidx >> 4)  & 1)) ^ tw1_c[43] ^ bits.b.b3 ^ bits.a.b3;
-      cur.b2 = (0 - ((bidx >> 3)  & 1)) ^ tw1_c[42] ^ bits.b.b2 ^ bits.a.b2;
-      cur.b1 = (0 - ((bidx >> 2)  & 1)) ^ tw1_c[41] ^ bits.b.b1 ^ bits.a.b1;
-      cur.b0 = (0 - ((bidx >> 1)  & 1)) ^ tw1_c[40] ^ bits.b.b0 ^ bits.a.b0;
+      tw_off_a = 40;
+      tw_off_c = 32;
+      tw_off_b = 24;
       break;
   }
 
-  bits.a.b0 = s0(cur);
-  bits.a.b1 = s1(cur);
-  bits.a.b2 = s2(cur);
-  bits.a.b3 = s3(cur);
-  bits.a.b4 = s4(cur);
-  bits.a.b5 = s5(cur);
-  bits.a.b6 = s6(cur);
-  bits.a.b7 = s7(cur);
-
-  switch (round) {
+  /* A xor B xor key xor tweak. */
+  switch (round % 7) {
+    case 0:
+      cur.b7 = (0 - ((bidx >> 8)  & 1)) ^ tw1_c[tw_off_a + 7] ^ bits.b.b7 ^ bits.a.b7;
+      cur.b6 = (0 - ((bidx >> 7)  & 1)) ^ tw1_c[tw_off_a + 6] ^ bits.b.b6 ^ bits.a.b6;
+      cur.b5 = (0 - ((bidx >> 6)  & 1)) ^ tw1_c[tw_off_a + 5] ^ bits.b.b5 ^ bits.a.b5;
+      cur.b4 = (0 - ((bidx >> 5)  & 1)) ^ tw1_c[tw_off_a + 4] ^ bits.b.b4 ^ bits.a.b4;
+      cur.b3 = (0 - ((bidx >> 4)  & 1)) ^ tw1_c[tw_off_a + 3] ^ bits.b.b3 ^ bits.a.b3;
+      cur.b2 = (0 - ((bidx >> 3)  & 1)) ^ tw1_c[tw_off_a + 2] ^ bits.b.b2 ^ bits.a.b2;
+      cur.b1 = (0 - ((bidx >> 2)  & 1)) ^ tw1_c[tw_off_a + 1] ^ bits.b.b1 ^ bits.a.b1;
+      cur.b0 = (0 - ((bidx >> 1)  & 1)) ^ tw1_c[tw_off_a]     ^ bits.b.b0 ^ bits.a.b0;
+      break;
+    case 1:
+      cur.b7 = key_hi[23]               ^ tw1_c[tw_off_a + 7] ^ bits.b.b7 ^ bits.c.b7;
+      cur.b6 = key_hi[22]               ^ tw1_c[tw_off_a + 6] ^ bits.b.b6 ^ bits.c.b6;
+      cur.b5 = key_hi[21]               ^ tw1_c[tw_off_a + 5] ^ bits.b.b5 ^ bits.c.b5;
+      cur.b4 = key_hi[20]               ^ tw1_c[tw_off_a + 4] ^ bits.b.b4 ^ bits.c.b4;
+      cur.b3 = key_hi[19]               ^ tw1_c[tw_off_a + 3] ^ bits.b.b3 ^ bits.c.b3;
+      cur.b2 = key_hi[18]               ^ tw1_c[tw_off_a + 2] ^ bits.b.b2 ^ bits.c.b2;
+      cur.b1 = key_hi[17]               ^ tw1_c[tw_off_a + 1] ^ bits.b.b1 ^ bits.c.b1;
+      cur.b0 = key_hi[16]               ^ tw1_c[tw_off_a]     ^ bits.b.b0 ^ bits.c.b0;
+      break;
     case 2:
-      cur.b7 = (0 - ((bidx >> 8)  & 1)) ^ tw1_c[31] ^ bits.b.b7 ^ bits.c.b7;
-      cur.b6 = (0 - ((bidx >> 7)  & 1)) ^ tw1_c[30] ^ bits.b.b6 ^ bits.c.b6;
-      cur.b5 = (0 - ((bidx >> 6)  & 1)) ^ tw1_c[29] ^ bits.b.b5 ^ bits.c.b5;
-      cur.b4 = (0 - ((bidx >> 5)  & 1)) ^ tw1_c[28] ^ bits.b.b4 ^ bits.c.b4;
-      cur.b3 = (0 - ((bidx >> 4)  & 1)) ^ tw1_c[27] ^ bits.b.b3 ^ bits.c.b3;
-      cur.b2 = (0 - ((bidx >> 3)  & 1)) ^ tw1_c[26] ^ bits.b.b2 ^ bits.c.b2;
-      cur.b1 = (0 - ((bidx >> 2)  & 1)) ^ tw1_c[25] ^ bits.b.b1 ^ bits.c.b1;
-      cur.b0 = (0 - ((bidx >> 1)  & 1)) ^ tw1_c[24] ^ bits.b.b0 ^ bits.c.b0;
+      cur.b7 = (0 - ((bidx >> 16) & 1)) ^ tw1_c[tw_off_a + 7] ^ bits.b.b7 ^ bits.a.b7;
+      cur.b6 = (0 - ((bidx >> 15) & 1)) ^ tw1_c[tw_off_a + 6] ^ bits.b.b6 ^ bits.a.b6;
+      cur.b5 = (0 - ((bidx >> 14) & 1)) ^ tw1_c[tw_off_a + 5] ^ bits.b.b5 ^ bits.a.b5;
+      cur.b4 = (0 - ((bidx >> 13) & 1)) ^ tw1_c[tw_off_a + 4] ^ bits.b.b4 ^ bits.a.b4;
+      cur.b3 = (0 - ((bidx >> 12) & 1)) ^ tw1_c[tw_off_a + 3] ^ bits.b.b3 ^ bits.a.b3;
+      cur.b2 = (0 - ((bidx >> 11) & 1)) ^ tw1_c[tw_off_a + 2] ^ bits.b.b2 ^ bits.a.b2;
+      cur.b1 = (0 - ((bidx >> 10) & 1)) ^ tw1_c[tw_off_a + 1] ^ bits.b.b1 ^ bits.a.b1;
+      cur.b0 = (0 - ((bidx >> 9)  & 1)) ^ tw1_c[tw_off_a]     ^ bits.b.b0 ^ bits.a.b0;
       break;
     case 3:
-      cur.b7 = key_hi[23]               ^ tw1_c[7]  ^ bits.b.b7 ^ bits.c.b7;
-      cur.b6 = key_hi[22]               ^ tw1_c[6]  ^ bits.b.b6 ^ bits.c.b6;
-      cur.b5 = key_hi[21]               ^ tw1_c[5]  ^ bits.b.b5 ^ bits.c.b5;
-      cur.b4 = key_hi[20]               ^ tw1_c[4]  ^ bits.b.b4 ^ bits.c.b4;
-      cur.b3 = key_hi[19]               ^ tw1_c[3]  ^ bits.b.b3 ^ bits.c.b3;
-      cur.b2 = key_hi[18]               ^ tw1_c[2]  ^ bits.b.b2 ^ bits.c.b2;
-      cur.b1 = key_hi[17]               ^ tw1_c[1]  ^ bits.b.b1 ^ bits.c.b1;
-      cur.b0 = key_hi[16]               ^ tw1_c[0]  ^ bits.b.b0 ^ bits.c.b0;
+      cur.b7 = (0 - ((tidx >> 2)  & 1)) ^ tw1_c[tw_off_a + 7] ^ bits.b.b7 ^ bits.a.b7;
+      cur.b6 = (0 - ((tidx >> 1)  & 1)) ^ tw1_c[tw_off_a + 6] ^ bits.b.b6 ^ bits.a.b6;
+      cur.b5 = (0 -  (tidx        & 1)) ^ tw1_c[tw_off_a + 5] ^ bits.b.b5 ^ bits.a.b5;
+      cur.b4 = 0xffff0000               ^ tw1_c[tw_off_a + 4] ^ bits.b.b4 ^ bits.a.b4;
+      cur.b3 = 0xff00ff00               ^ tw1_c[tw_off_a + 3] ^ bits.b.b3 ^ bits.a.b3;
+      cur.b2 = 0xf0f0f0f0               ^ tw1_c[tw_off_a + 2] ^ bits.b.b2 ^ bits.a.b2;
+      cur.b1 = 0xcccccccc               ^ tw1_c[tw_off_a + 1]  ^ bits.b.b1 ^ bits.a.b1;
+      cur.b0 = 0xaaaaaaaa               ^ tw1_c[tw_off_a]      ^ bits.b.b0 ^ bits.a.b0;
       break;
     case 4:
-      cur.b7 = (0 - ((bidx >> 16) & 1)) ^ tw1_c[47] ^ bits.b.b7 ^ bits.c.b7;
-      cur.b6 = (0 - ((bidx >> 15) & 1)) ^ tw1_c[46] ^ bits.b.b6 ^ bits.c.b6;
-      cur.b5 = (0 - ((bidx >> 14) & 1)) ^ tw1_c[45] ^ bits.b.b5 ^ bits.c.b5;
-      cur.b4 = (0 - ((bidx >> 13) & 1)) ^ tw1_c[44] ^ bits.b.b4 ^ bits.c.b4;
-      cur.b3 = (0 - ((bidx >> 12) & 1)) ^ tw1_c[43] ^ bits.b.b3 ^ bits.c.b3;
-      cur.b2 = (0 - ((bidx >> 11) & 1)) ^ tw1_c[42] ^ bits.b.b2 ^ bits.c.b2;
-      cur.b1 = (0 - ((bidx >> 10) & 1)) ^ tw1_c[41] ^ bits.b.b1 ^ bits.c.b1;
-      cur.b0 = (0 - ((bidx >> 9)  & 1)) ^ tw1_c[40] ^ bits.b.b0 ^ bits.c.b0;
+      cur.b7 = key_hi[7]                ^ tw1_c[tw_off_a + 7] ^ bits.b.b7 ^ bits.a.b7;
+      cur.b6 = key_hi[6]                ^ tw1_c[tw_off_a + 6] ^ bits.b.b6 ^ bits.a.b6;
+      cur.b5 = key_hi[5]                ^ tw1_c[tw_off_a + 5] ^ bits.b.b5 ^ bits.a.b5;
+      cur.b4 = key_hi[4]                ^ tw1_c[tw_off_a + 4] ^ bits.b.b4 ^ bits.a.b4;
+      cur.b3 = key_hi[3]                ^ tw1_c[tw_off_a + 3] ^ bits.b.b3 ^ bits.a.b3;
+      cur.b2 = key_hi[2]                ^ tw1_c[tw_off_a + 2] ^ bits.b.b2 ^ bits.a.b2;
+      cur.b1 = key_hi[1]                ^ tw1_c[tw_off_a + 1] ^ bits.b.b1 ^ bits.a.b1;
+      cur.b0 = key_hi[0]                ^ tw1_c[tw_off_a]     ^ bits.b.b0 ^ bits.a.b0;
       break;
     case 5:
-      cur.b7 = (0 - ((tidx >> 2)  & 1)) ^ tw1_c[23] ^ bits.b.b7 ^ bits.c.b7;
-      cur.b6 = (0 - ((tidx >> 1)  & 1)) ^ tw1_c[22] ^ bits.b.b6 ^ bits.c.b6;
-      cur.b5 = (0 -  (tidx        & 1)) ^ tw1_c[21] ^ bits.b.b5 ^ bits.c.b5;
-      cur.b4 = 0xffff0000               ^ tw1_c[20] ^ bits.b.b4 ^ bits.c.b4;
-      cur.b3 = 0xff00ff00               ^ tw1_c[19] ^ bits.b.b3 ^ bits.c.b3;
-      cur.b2 = 0xf0f0f0f0               ^ tw1_c[18] ^ bits.b.b2 ^ bits.c.b2;
-      cur.b1 = 0xcccccccc               ^ tw1_c[17] ^ bits.b.b1 ^ bits.c.b1;
-      cur.b0 = 0xaaaaaaaa               ^ tw1_c[16] ^ bits.b.b0 ^ bits.c.b0;
+      cur.b7 = (0 -  (bidx        & 1)) ^ tw1_c[tw_off_a + 7] ^ bits.b.b7 ^ bits.a.b7;
+      cur.b6 = (0 - ((tidx >> 9)  & 1)) ^ tw1_c[tw_off_a + 6] ^ bits.b.b6 ^ bits.a.b6;
+      cur.b5 = (0 - ((tidx >> 8)  & 1)) ^ tw1_c[tw_off_a + 5] ^ bits.b.b5 ^ bits.a.b5;
+      cur.b4 = (0 - ((tidx >> 7)  & 1)) ^ tw1_c[tw_off_a + 4] ^ bits.b.b4 ^ bits.a.b4;
+      cur.b3 = (0 - ((tidx >> 6)  & 1)) ^ tw1_c[tw_off_a + 3] ^ bits.b.b3 ^ bits.a.b3;
+      cur.b2 = (0 - ((tidx >> 5)  & 1)) ^ tw1_c[tw_off_a + 2] ^ bits.b.b2 ^ bits.a.b2;
+      cur.b1 = (0 - ((tidx >> 4)  & 1)) ^ tw1_c[tw_off_a + 1] ^ bits.b.b1 ^ bits.a.b1;
+      cur.b0 = (0 - ((tidx >> 3)  & 1)) ^ tw1_c[tw_off_a]     ^ bits.b.b0 ^ bits.a.b0;
       break;
     case 6:
-      cur.b7 = key_hi[7]                ^ tw1_c[63] ^ bits.b.b7 ^ bits.c.b7;
-      cur.b6 = key_hi[6]                ^ tw1_c[62] ^ bits.b.b6 ^ bits.c.b6;
-      cur.b5 = key_hi[5]                ^ tw1_c[61] ^ bits.b.b5 ^ bits.c.b5;
-      cur.b4 = key_hi[4]                ^ tw1_c[60] ^ bits.b.b4 ^ bits.c.b4;
-      cur.b3 = key_hi[3]                ^ tw1_c[59] ^ bits.b.b3 ^ bits.c.b3;
-      cur.b2 = key_hi[2]                ^ tw1_c[58] ^ bits.b.b2 ^ bits.c.b2;
-      cur.b1 = key_hi[1]                ^ tw1_c[57] ^ bits.b.b1 ^ bits.c.b1;
-      cur.b0 = key_hi[0]                ^ tw1_c[56] ^ bits.b.b0 ^ bits.c.b0;
-      break;
-    case 7:
-      cur.b7 = (0 -  (bidx        & 1)) ^ tw1_c[39] ^ bits.b.b7 ^ bits.c.b7;
-      cur.b6 = (0 - ((tidx >> 9)  & 1)) ^ tw1_c[38] ^ bits.b.b6 ^ bits.c.b6;
-      cur.b5 = (0 - ((tidx >> 8)  & 1)) ^ tw1_c[37] ^ bits.b.b5 ^ bits.c.b5;
-      cur.b4 = (0 - ((tidx >> 7)  & 1)) ^ tw1_c[36] ^ bits.b.b4 ^ bits.c.b4;
-      cur.b3 = (0 - ((tidx >> 6)  & 1)) ^ tw1_c[35] ^ bits.b.b3 ^ bits.c.b3;
-      cur.b2 = (0 - ((tidx >> 5)  & 1)) ^ tw1_c[34] ^ bits.b.b2 ^ bits.c.b2;
-      cur.b1 = (0 - ((tidx >> 4)  & 1)) ^ tw1_c[33] ^ bits.b.b1 ^ bits.c.b1;
-      cur.b0 = (0 - ((tidx >> 3)  & 1)) ^ tw1_c[32] ^ bits.b.b0 ^ bits.c.b0;
+      cur.b7 = key_hi[15]               ^ tw1_c[tw_off_a + 7] ^ bits.b.b7 ^ bits.a.b7;
+      cur.b6 = key_hi[14]               ^ tw1_c[tw_off_a + 6] ^ bits.b.b6 ^ bits.a.b6;
+      cur.b5 = key_hi[13]               ^ tw1_c[tw_off_a + 5] ^ bits.b.b5 ^ bits.a.b5;
+      cur.b4 = key_hi[12]               ^ tw1_c[tw_off_a + 4] ^ bits.b.b4 ^ bits.a.b4;
+      cur.b3 = key_hi[11]               ^ tw1_c[tw_off_a + 3] ^ bits.b.b3 ^ bits.a.b3;
+      cur.b2 = key_hi[10]               ^ tw1_c[tw_off_a + 2] ^ bits.b.b2 ^ bits.a.b2;
+      cur.b1 = key_hi[9]                ^ tw1_c[tw_off_a + 1] ^ bits.b.b1 ^ bits.a.b1;
+      cur.b0 = key_hi[8]                ^ tw1_c[tw_off_a]     ^ bits.b.b0 ^ bits.a.b0;
       break;
   }
 
-  bits.c.b0 = s0(cur);
-  bits.c.b1 = s1(cur);
-  bits.c.b2 = s2(cur);
-  bits.c.b3 = s3(cur);
-  bits.c.b4 = s4(cur);
-  bits.c.b5 = s5(cur);
-  bits.c.b6 = s6(cur);
-  bits.c.b7 = s7(cur);
+  if (last) {
+    bits.a = cur;
+  } else {
+    bits.a.b0 = s0(cur);
+    bits.a.b1 = s1(cur);
+    bits.a.b2 = s2(cur);
+    bits.a.b3 = s3(cur);
+    bits.a.b4 = s4(cur);
+    bits.a.b5 = s5(cur);
+    bits.a.b6 = s6(cur);
+    bits.a.b7 = s7(cur);
+  }
 
-  switch (round) {
+  /* C xor B xor key xor tweak. */
+  switch (round % 7) {
+    case 0:
+      cur.b7 = (0 -  (bidx        & 1)) ^ tw1_c[tw_off_c + 7] ^ bits.b.b7 ^ bits.c.b7;
+      cur.b6 = (0 - ((tidx >> 9)  & 1)) ^ tw1_c[tw_off_c + 6] ^ bits.b.b6 ^ bits.c.b6;
+      cur.b5 = (0 - ((tidx >> 8)  & 1)) ^ tw1_c[tw_off_c + 5] ^ bits.b.b5 ^ bits.c.b5;
+      cur.b4 = (0 - ((tidx >> 7)  & 1)) ^ tw1_c[tw_off_c + 4] ^ bits.b.b4 ^ bits.c.b4;
+      cur.b3 = (0 - ((tidx >> 6)  & 1)) ^ tw1_c[tw_off_c + 3] ^ bits.b.b3 ^ bits.c.b3;
+      cur.b2 = (0 - ((tidx >> 5)  & 1)) ^ tw1_c[tw_off_c + 2] ^ bits.b.b2 ^ bits.c.b2;
+      cur.b1 = (0 - ((tidx >> 4)  & 1)) ^ tw1_c[tw_off_c + 1] ^ bits.b.b1 ^ bits.c.b1;
+      cur.b0 = (0 - ((tidx >> 3)  & 1)) ^ tw1_c[tw_off_c]     ^ bits.b.b0 ^ bits.c.b0;
+      break;
+    case 1:
+      cur.b7 = key_hi[15]               ^ tw1_c[tw_off_c + 7] ^ bits.b.b7 ^ bits.c.b7;
+      cur.b6 = key_hi[14]               ^ tw1_c[tw_off_c + 6] ^ bits.b.b6 ^ bits.c.b6;
+      cur.b5 = key_hi[13]               ^ tw1_c[tw_off_c + 5] ^ bits.b.b5 ^ bits.c.b5;
+      cur.b4 = key_hi[12]               ^ tw1_c[tw_off_c + 4] ^ bits.b.b4 ^ bits.c.b4;
+      cur.b3 = key_hi[11]               ^ tw1_c[tw_off_c + 3] ^ bits.b.b3 ^ bits.c.b3;
+      cur.b2 = key_hi[10]               ^ tw1_c[tw_off_c + 2] ^ bits.b.b2 ^ bits.c.b2;
+      cur.b1 = key_hi[9]                ^ tw1_c[tw_off_c + 1] ^ bits.b.b1 ^ bits.c.b1;
+      cur.b0 = key_hi[8]                ^ tw1_c[tw_off_c]     ^ bits.b.b0 ^ bits.c.b0;
     case 2:
-      cur.b7 = (0 -  (bidx        & 1)) ^ tw1_c[23] ^ bits.a.b7 ^ bits.b.b7 ^ bits.c.b7;
-      cur.b6 = (0 - ((tidx >> 9)  & 1)) ^ tw1_c[22] ^ bits.a.b6 ^ bits.b.b6 ^ bits.c.b6;
-      cur.b5 = (0 - ((tidx >> 8)  & 1)) ^ tw1_c[21] ^ bits.a.b5 ^ bits.b.b5 ^ bits.c.b5;
-      cur.b4 = (0 - ((tidx >> 7)  & 1)) ^ tw1_c[20] ^ bits.a.b4 ^ bits.b.b4 ^ bits.c.b4;
-      cur.b3 = (0 - ((tidx >> 6)  & 1)) ^ tw1_c[19] ^ bits.a.b3 ^ bits.b.b3 ^ bits.c.b3;
-      cur.b2 = (0 - ((tidx >> 5)  & 1)) ^ tw1_c[18] ^ bits.a.b2 ^ bits.b.b2 ^ bits.c.b2;
-      cur.b1 = (0 - ((tidx >> 4)  & 1)) ^ tw1_c[17] ^ bits.a.b1 ^ bits.b.b1 ^ bits.c.b1;
-      cur.b0 = (0 - ((tidx >> 3)  & 1)) ^ tw1_c[16] ^ bits.a.b0 ^ bits.b.b0 ^ bits.c.b0;
+      cur.b7 = (0 - ((bidx >> 8)  & 1)) ^ tw1_c[tw_off_c + 7] ^ bits.b.b7 ^ bits.c.b7;
+      cur.b6 = (0 - ((bidx >> 7)  & 1)) ^ tw1_c[tw_off_c + 6] ^ bits.b.b6 ^ bits.c.b6;
+      cur.b5 = (0 - ((bidx >> 6)  & 1)) ^ tw1_c[tw_off_c + 5] ^ bits.b.b5 ^ bits.c.b5;
+      cur.b4 = (0 - ((bidx >> 5)  & 1)) ^ tw1_c[tw_off_c + 4] ^ bits.b.b4 ^ bits.c.b4;
+      cur.b3 = (0 - ((bidx >> 4)  & 1)) ^ tw1_c[tw_off_c + 3] ^ bits.b.b3 ^ bits.c.b3;
+      cur.b2 = (0 - ((bidx >> 3)  & 1)) ^ tw1_c[tw_off_c + 2] ^ bits.b.b2 ^ bits.c.b2;
+      cur.b1 = (0 - ((bidx >> 2)  & 1)) ^ tw1_c[tw_off_c + 1] ^ bits.b.b1 ^ bits.c.b1;
+      cur.b0 = (0 - ((bidx >> 1)  & 1)) ^ tw1_c[tw_off_c]     ^ bits.b.b0 ^ bits.c.b0;
       break;
     case 3:
-      cur.b7 = key_hi[15]               ^ tw1_c[63] ^ bits.a.b7 ^ bits.b.b7 ^ bits.c.b7;
-      cur.b6 = key_hi[14]               ^ tw1_c[62] ^ bits.a.b6 ^ bits.b.b6 ^ bits.c.b6;
-      cur.b5 = key_hi[13]               ^ tw1_c[61] ^ bits.a.b5 ^ bits.b.b5 ^ bits.c.b5;
-      cur.b4 = key_hi[12]               ^ tw1_c[60] ^ bits.a.b4 ^ bits.b.b4 ^ bits.c.b4;
-      cur.b3 = key_hi[11]               ^ tw1_c[59] ^ bits.a.b3 ^ bits.b.b3 ^ bits.c.b3;
-      cur.b2 = key_hi[10]               ^ tw1_c[58] ^ bits.a.b2 ^ bits.b.b2 ^ bits.c.b2;
-      cur.b1 = key_hi[9]                ^ tw1_c[57] ^ bits.a.b1 ^ bits.b.b1 ^ bits.c.b1;
-      cur.b0 = key_hi[8]                ^ tw1_c[56] ^ bits.a.b0 ^ bits.b.b0 ^ bits.c.b0;
+      cur.b7 = key_hi[23]               ^ tw1_c[tw_off_c + 7] ^ bits.b.b7 ^ bits.c.b7;
+      cur.b6 = key_hi[22]               ^ tw1_c[tw_off_c + 6] ^ bits.b.b6 ^ bits.c.b6;
+      cur.b5 = key_hi[21]               ^ tw1_c[tw_off_c + 5] ^ bits.b.b5 ^ bits.c.b5;
+      cur.b4 = key_hi[20]               ^ tw1_c[tw_off_c + 4] ^ bits.b.b4 ^ bits.c.b4;
+      cur.b3 = key_hi[19]               ^ tw1_c[tw_off_c + 3] ^ bits.b.b3 ^ bits.c.b3;
+      cur.b2 = key_hi[18]               ^ tw1_c[tw_off_c + 2] ^ bits.b.b2 ^ bits.c.b2;
+      cur.b1 = key_hi[17]               ^ tw1_c[tw_off_c + 1] ^ bits.b.b1 ^ bits.c.b1;
+      cur.b0 = key_hi[16]               ^ tw1_c[tw_off_c]     ^ bits.b.b0 ^ bits.c.b0;
       break;
     case 4:
-      cur.b7 = (0 - ((bidx >> 8)  & 1)) ^ tw1_c[39] ^ bits.a.b7 ^ bits.b.b7 ^ bits.c.b7;
-      cur.b6 = (0 - ((bidx >> 7)  & 1)) ^ tw1_c[38] ^ bits.a.b6 ^ bits.b.b6 ^ bits.c.b6;
-      cur.b5 = (0 - ((bidx >> 6)  & 1)) ^ tw1_c[37] ^ bits.a.b5 ^ bits.b.b5 ^ bits.c.b5;
-      cur.b4 = (0 - ((bidx >> 5)  & 1)) ^ tw1_c[36] ^ bits.a.b4 ^ bits.b.b4 ^ bits.c.b4;
-      cur.b3 = (0 - ((bidx >> 4)  & 1)) ^ tw1_c[35] ^ bits.a.b3 ^ bits.b.b3 ^ bits.c.b3;
-      cur.b2 = (0 - ((bidx >> 3)  & 1)) ^ tw1_c[34] ^ bits.a.b2 ^ bits.b.b2 ^ bits.c.b2;
-      cur.b1 = (0 - ((bidx >> 2)  & 1)) ^ tw1_c[33] ^ bits.a.b1 ^ bits.b.b1 ^ bits.c.b1;
-      cur.b0 = (0 - ((bidx >> 1)  & 1)) ^ tw1_c[32] ^ bits.a.b0 ^ bits.b.b0 ^ bits.c.b0;
+      cur.b7 = (0 - ((bidx >> 16) & 1)) ^ tw1_c[tw_off_c + 7] ^ bits.b.b7 ^ bits.c.b7;
+      cur.b6 = (0 - ((bidx >> 15) & 1)) ^ tw1_c[tw_off_c + 6] ^ bits.b.b6 ^ bits.c.b6;
+      cur.b5 = (0 - ((bidx >> 14) & 1)) ^ tw1_c[tw_off_c + 5] ^ bits.b.b5 ^ bits.c.b5;
+      cur.b4 = (0 - ((bidx >> 13) & 1)) ^ tw1_c[tw_off_c + 4] ^ bits.b.b4 ^ bits.c.b4;
+      cur.b3 = (0 - ((bidx >> 12) & 1)) ^ tw1_c[tw_off_c + 3] ^ bits.b.b3 ^ bits.c.b3;
+      cur.b2 = (0 - ((bidx >> 11) & 1)) ^ tw1_c[tw_off_c + 2] ^ bits.b.b2 ^ bits.c.b2;
+      cur.b1 = (0 - ((bidx >> 10) & 1)) ^ tw1_c[tw_off_c + 1] ^ bits.b.b1 ^ bits.c.b1;
+      cur.b0 = (0 - ((bidx >> 9)  & 1)) ^ tw1_c[tw_off_c]     ^ bits.b.b0 ^ bits.c.b0;
       break;
     case 5:
-      cur.b7 = key_hi[23]               ^ tw1_c[15] ^ bits.a.b7 ^ bits.b.b7 ^ bits.c.b7;
-      cur.b6 = key_hi[22]               ^ tw1_c[14] ^ bits.a.b6 ^ bits.b.b6 ^ bits.c.b6;
-      cur.b5 = key_hi[21]               ^ tw1_c[13] ^ bits.a.b5 ^ bits.b.b5 ^ bits.c.b5;
-      cur.b4 = key_hi[20]               ^ tw1_c[12] ^ bits.a.b4 ^ bits.b.b4 ^ bits.c.b4;
-      cur.b3 = key_hi[19]               ^ tw1_c[11] ^ bits.a.b3 ^ bits.b.b3 ^ bits.c.b3;
-      cur.b2 = key_hi[18]               ^ tw1_c[10] ^ bits.a.b2 ^ bits.b.b2 ^ bits.c.b2;
-      cur.b1 = key_hi[17]               ^ tw1_c[9]  ^ bits.a.b1 ^ bits.b.b1 ^ bits.c.b1;
-      cur.b0 = key_hi[16]               ^ tw1_c[8]  ^ bits.a.b0 ^ bits.b.b0 ^ bits.c.b0;
+      cur.b7 = (0 - ((tidx >> 2)  & 1)) ^ tw1_c[tw_off_c + 7] ^ bits.b.b7 ^ bits.c.b7;
+      cur.b6 = (0 - ((tidx >> 1)  & 1)) ^ tw1_c[tw_off_c + 6] ^ bits.b.b6 ^ bits.c.b6;
+      cur.b5 = (0 -  (tidx        & 1)) ^ tw1_c[tw_off_c + 5] ^ bits.b.b5 ^ bits.c.b5;
+      cur.b4 = 0xffff0000               ^ tw1_c[tw_off_c + 4] ^ bits.b.b4 ^ bits.c.b4;
+      cur.b3 = 0xff00ff00               ^ tw1_c[tw_off_c + 3] ^ bits.b.b3 ^ bits.c.b3;
+      cur.b2 = 0xf0f0f0f0               ^ tw1_c[tw_off_c + 2] ^ bits.b.b2 ^ bits.c.b2;
+      cur.b1 = 0xcccccccc               ^ tw1_c[tw_off_c + 1] ^ bits.b.b1 ^ bits.c.b1;
+      cur.b0 = 0xaaaaaaaa               ^ tw1_c[tw_off_c]     ^ bits.b.b0 ^ bits.c.b0;
       break;
     case 6:
-      cur.b7 = (0 - ((bidx >> 16) & 1)) ^ tw1_c[55] ^ bits.a.b7 ^ bits.b.b7 ^ bits.c.b7;
-      cur.b6 = (0 - ((bidx >> 15) & 1)) ^ tw1_c[54] ^ bits.a.b6 ^ bits.b.b6 ^ bits.c.b6;
-      cur.b5 = (0 - ((bidx >> 14) & 1)) ^ tw1_c[53] ^ bits.a.b5 ^ bits.b.b5 ^ bits.c.b5;
-      cur.b4 = (0 - ((bidx >> 13) & 1)) ^ tw1_c[52] ^ bits.a.b4 ^ bits.b.b4 ^ bits.c.b4;
-      cur.b3 = (0 - ((bidx >> 12) & 1)) ^ tw1_c[51] ^ bits.a.b3 ^ bits.b.b3 ^ bits.c.b3;
-      cur.b2 = (0 - ((bidx >> 11) & 1)) ^ tw1_c[50] ^ bits.a.b2 ^ bits.b.b2 ^ bits.c.b2;
-      cur.b1 = (0 - ((bidx >> 10) & 1)) ^ tw1_c[49] ^ bits.a.b1 ^ bits.b.b1 ^ bits.c.b1;
-      cur.b0 = (0 - ((bidx >> 9)  & 1)) ^ tw1_c[48] ^ bits.a.b0 ^ bits.b.b0 ^ bits.c.b0;
-      break;
-    case 7:
-      cur.b7 = (0 - ((tidx >> 2) & 1))  ^ tw1_c[31] ^ bits.a.b7 ^ bits.b.b7 ^ bits.c.b7;
-      cur.b6 = (0 - ((tidx >> 1) & 1))  ^ tw1_c[30] ^ bits.a.b6 ^ bits.b.b6 ^ bits.c.b6;
-      cur.b5 = (0 -  (tidx       & 1))  ^ tw1_c[29] ^ bits.a.b5 ^ bits.b.b5 ^ bits.c.b5;
-      cur.b4 = 0xffff0000               ^ tw1_c[28] ^ bits.a.b4 ^ bits.b.b4 ^ bits.c.b4;
-      cur.b3 = 0xff00ff00               ^ tw1_c[27] ^ bits.a.b3 ^ bits.b.b3 ^ bits.c.b3;
-      cur.b2 = 0xf0f0f0f0               ^ tw1_c[26] ^ bits.a.b2 ^ bits.b.b2 ^ bits.c.b2;
-      cur.b1 = 0xcccccccc               ^ tw1_c[25] ^ bits.a.b1 ^ bits.b.b1 ^ bits.c.b1;
-      cur.b0 = 0xaaaaaaaa               ^ tw1_c[24] ^ bits.a.b0 ^ bits.b.b0 ^ bits.c.b0;
+      cur.b7 = key_hi[7]                ^ tw1_c[tw_off_c + 7] ^ bits.b.b7 ^ bits.c.b7;
+      cur.b6 = key_hi[6]                ^ tw1_c[tw_off_c + 6] ^ bits.b.b6 ^ bits.c.b6;
+      cur.b5 = key_hi[5]                ^ tw1_c[tw_off_c + 5] ^ bits.b.b5 ^ bits.c.b5;
+      cur.b4 = key_hi[4]                ^ tw1_c[tw_off_c + 4] ^ bits.b.b4 ^ bits.c.b4;
+      cur.b3 = key_hi[3]                ^ tw1_c[tw_off_c + 3] ^ bits.b.b3 ^ bits.c.b3;
+      cur.b2 = key_hi[2]                ^ tw1_c[tw_off_c + 2] ^ bits.b.b2 ^ bits.c.b2;
+      cur.b1 = key_hi[1]                ^ tw1_c[tw_off_c + 1] ^ bits.b.b1 ^ bits.c.b1;
+      cur.b0 = key_hi[0]                ^ tw1_c[tw_off_c]     ^ bits.b.b0 ^ bits.c.b0;
       break;
   }
 
-  bits.b.b0 = s0(cur);
-  bits.b.b1 = s1(cur);
-  bits.b.b2 = s2(cur);
-  bits.b.b3 = s3(cur);
-  bits.b.b4 = s4(cur);
-  bits.b.b5 = s5(cur);
-  bits.b.b6 = s6(cur);
-  bits.b.b7 = s7(cur);
-  return bits;
-}
+  if (last) {
+    bits.c = cur;
+  } else {
+    bits.c.b0 = s0(cur);
+    bits.c.b1 = s1(cur);
+    bits.c.b2 = s2(cur);
+    bits.c.b3 = s3(cur);
+    bits.c.b4 = s4(cur);
+    bits.c.b5 = s5(cur);
+    bits.c.b6 = s6(cur);
+    bits.c.b7 = s7(cur);
+  }
 
-__device__ __forceinline__ twentyfourbits encrypt_last_round(twentyfourbits bits, int round,
-    volatile const int * __restrict key_hi) {
-
-  volatile int bidx = blockIdx.x;
-  volatile int tidx = threadIdx.x;
-
-  switch (round) {
+  /* B xor key xor tweak. */
+  switch (round % 7) {
+    case 0:
+      cur.b7 = (0 - ((tidx >> 2) & 1))  ^ tw1_c[tw_off_b + 7] ^ bits.b.b7;
+      cur.b6 = (0 - ((tidx >> 1) & 1))  ^ tw1_c[tw_off_b + 6] ^ bits.b.b6;
+      cur.b5 = (0 -  (tidx       & 1))  ^ tw1_c[tw_off_b + 5] ^ bits.b.b5;
+      cur.b4 = 0xffff0000               ^ tw1_c[tw_off_b + 4] ^ bits.b.b4;
+      cur.b3 = 0xff00ff00               ^ tw1_c[tw_off_b + 3] ^ bits.b.b3;
+      cur.b2 = 0xf0f0f0f0               ^ tw1_c[tw_off_b + 2] ^ bits.b.b2;
+      cur.b1 = 0xcccccccc               ^ tw1_c[tw_off_b + 1] ^ bits.b.b1;
+      cur.b0 = 0xaaaaaaaa               ^ tw1_c[tw_off_b]     ^ bits.b.b0;
+      break;
+    case 1:
+      cur.b7 = key_hi[7]                ^ tw1_c[tw_off_b + 7] ^ bits.b.b7;
+      cur.b6 = key_hi[6]                ^ tw1_c[tw_off_b + 6] ^ bits.b.b6;
+      cur.b5 = key_hi[5]                ^ tw1_c[tw_off_b + 5] ^ bits.b.b5;
+      cur.b4 = key_hi[4]                ^ tw1_c[tw_off_b + 4] ^ bits.b.b4;
+      cur.b3 = key_hi[3]                ^ tw1_c[tw_off_b + 3] ^ bits.b.b3;
+      cur.b2 = key_hi[2]                ^ tw1_c[tw_off_b + 2] ^ bits.b.b2;
+      cur.b1 = key_hi[1]                ^ tw1_c[tw_off_b + 1] ^ bits.b.b1;
+      cur.b0 = key_hi[0]                ^ tw1_c[tw_off_b]     ^ bits.b.b0;
     case 2:
-      bits.a.b7 = (0 - ((bidx >> 16) & 1)) ^ tw1_c[39] ^ bits.b.b7 ^ bits.a.b7;
-      bits.a.b6 = (0 - ((bidx >> 15) & 1)) ^ tw1_c[38] ^ bits.b.b6 ^ bits.a.b6;
-      bits.a.b5 = (0 - ((bidx >> 14) & 1)) ^ tw1_c[37] ^ bits.b.b5 ^ bits.a.b5;
-      bits.a.b4 = (0 - ((bidx >> 13) & 1)) ^ tw1_c[36] ^ bits.b.b4 ^ bits.a.b4;
-      bits.a.b3 = (0 - ((bidx >> 12) & 1)) ^ tw1_c[35] ^ bits.b.b3 ^ bits.a.b3;
-      bits.a.b2 = (0 - ((bidx >> 11) & 1)) ^ tw1_c[34] ^ bits.b.b2 ^ bits.a.b2;
-      bits.a.b1 = (0 - ((bidx >> 10) & 1)) ^ tw1_c[33] ^ bits.b.b1 ^ bits.a.b1;
-      bits.a.b0 = (0 - ((bidx >> 9)  & 1)) ^ tw1_c[32] ^ bits.b.b0 ^ bits.a.b0;
+      cur.b7 = (0 -  (bidx        & 1)) ^ tw1_c[tw_off_b + 7] ^ bits.b.b7;
+      cur.b6 = (0 - ((tidx >> 9)  & 1)) ^ tw1_c[tw_off_b + 6] ^ bits.b.b6;
+      cur.b5 = (0 - ((tidx >> 8)  & 1)) ^ tw1_c[tw_off_b + 5] ^ bits.b.b5;
+      cur.b4 = (0 - ((tidx >> 7)  & 1)) ^ tw1_c[tw_off_b + 4] ^ bits.b.b4;
+      cur.b3 = (0 - ((tidx >> 6)  & 1)) ^ tw1_c[tw_off_b + 3] ^ bits.b.b3;
+      cur.b2 = (0 - ((tidx >> 5)  & 1)) ^ tw1_c[tw_off_b + 2] ^ bits.b.b2;
+      cur.b1 = (0 - ((tidx >> 4)  & 1)) ^ tw1_c[tw_off_b + 1] ^ bits.b.b1;
+      cur.b0 = (0 - ((tidx >> 3)  & 1)) ^ tw1_c[tw_off_b]     ^ bits.b.b0;
       break;
     case 3:
-      bits.a.b7 = (0 - ((tidx >> 2)  & 1)) ^ tw1_c[15] ^ bits.b.b7 ^ bits.a.b7;
-      bits.a.b6 = (0 - ((tidx >> 1)  & 1)) ^ tw1_c[14] ^ bits.b.b6 ^ bits.a.b6;
-      bits.a.b5 = (0 -  (tidx        & 1)) ^ tw1_c[13] ^ bits.b.b5 ^ bits.a.b5;
-      bits.a.b4 = 0xffff0000               ^ tw1_c[12] ^ bits.b.b4 ^ bits.a.b4;
-      bits.a.b3 = 0xff00ff00               ^ tw1_c[11] ^ bits.b.b3 ^ bits.a.b3;
-      bits.a.b2 = 0xf0f0f0f0               ^ tw1_c[10] ^ bits.b.b2 ^ bits.a.b2;
-      bits.a.b1 = 0xcccccccc               ^ tw1_c[9]  ^ bits.b.b1 ^ bits.a.b1;
-      bits.a.b0 = 0xaaaaaaaa               ^ tw1_c[8]  ^ bits.b.b0 ^ bits.a.b0;
+      cur.b7 = key_hi[15]               ^ tw1_c[tw_off_b + 7] ^ bits.b.b7;
+      cur.b6 = key_hi[14]               ^ tw1_c[tw_off_b + 6] ^ bits.b.b6;
+      cur.b5 = key_hi[13]               ^ tw1_c[tw_off_b + 5] ^ bits.b.b5;
+      cur.b4 = key_hi[12]               ^ tw1_c[tw_off_b + 4] ^ bits.b.b4;
+      cur.b3 = key_hi[11]               ^ tw1_c[tw_off_b + 3] ^ bits.b.b3;
+      cur.b2 = key_hi[10]               ^ tw1_c[tw_off_b + 2] ^ bits.b.b2;
+      cur.b1 = key_hi[9]                ^ tw1_c[tw_off_b + 1] ^ bits.b.b1;
+      cur.b0 = key_hi[8]                ^ tw1_c[tw_off_b]     ^ bits.b.b0;
       break;
     case 4:
-      bits.a.b7 = key_hi[7]                ^ tw1_c[55] ^ bits.b.b7 ^ bits.a.b7;
-      bits.a.b6 = key_hi[6]                ^ tw1_c[54] ^ bits.b.b6 ^ bits.a.b6;
-      bits.a.b5 = key_hi[5]                ^ tw1_c[53] ^ bits.b.b5 ^ bits.a.b5;
-      bits.a.b4 = key_hi[4]                ^ tw1_c[52] ^ bits.b.b4 ^ bits.a.b4;
-      bits.a.b3 = key_hi[3]                ^ tw1_c[51] ^ bits.b.b3 ^ bits.a.b3;
-      bits.a.b2 = key_hi[2]                ^ tw1_c[50] ^ bits.b.b2 ^ bits.a.b2;
-      bits.a.b1 = key_hi[1]                ^ tw1_c[49] ^ bits.b.b1 ^ bits.a.b1;
-      bits.a.b0 = key_hi[0]                ^ tw1_c[48] ^ bits.b.b0 ^ bits.a.b0;
+      cur.b7 = (0 - ((bidx >> 8)  & 1)) ^ tw1_c[tw_off_b + 7] ^ bits.b.b7;
+      cur.b6 = (0 - ((bidx >> 7)  & 1)) ^ tw1_c[tw_off_b + 6] ^ bits.b.b6;
+      cur.b5 = (0 - ((bidx >> 6)  & 1)) ^ tw1_c[tw_off_b + 5] ^ bits.b.b5;
+      cur.b4 = (0 - ((bidx >> 5)  & 1)) ^ tw1_c[tw_off_b + 4] ^ bits.b.b4;
+      cur.b3 = (0 - ((bidx >> 4)  & 1)) ^ tw1_c[tw_off_b + 3] ^ bits.b.b3;
+      cur.b2 = (0 - ((bidx >> 3)  & 1)) ^ tw1_c[tw_off_b + 2] ^ bits.b.b2;
+      cur.b1 = (0 - ((bidx >> 2)  & 1)) ^ tw1_c[tw_off_b + 1] ^ bits.b.b1;
+      cur.b0 = (0 - ((bidx >> 1)  & 1)) ^ tw1_c[tw_off_b]     ^ bits.b.b0;
       break;
     case 5:
-      bits.a.b7 = (0 -  (bidx        & 1)) ^ tw1_c[31] ^ bits.b.b7 ^ bits.a.b7;
-      bits.a.b6 = (0 - ((tidx >> 9)  & 1)) ^ tw1_c[30] ^ bits.b.b6 ^ bits.a.b6;
-      bits.a.b5 = (0 - ((tidx >> 8)  & 1)) ^ tw1_c[29] ^ bits.b.b5 ^ bits.a.b5;
-      bits.a.b4 = (0 - ((tidx >> 7)  & 1)) ^ tw1_c[28] ^ bits.b.b4 ^ bits.a.b4;
-      bits.a.b3 = (0 - ((tidx >> 6)  & 1)) ^ tw1_c[27] ^ bits.b.b3 ^ bits.a.b3;
-      bits.a.b2 = (0 - ((tidx >> 5)  & 1)) ^ tw1_c[26] ^ bits.b.b2 ^ bits.a.b2;
-      bits.a.b1 = (0 - ((tidx >> 4)  & 1)) ^ tw1_c[25] ^ bits.b.b1 ^ bits.a.b1;
-      bits.a.b0 = (0 - ((tidx >> 3)  & 1)) ^ tw1_c[24] ^ bits.b.b0 ^ bits.a.b0;
+      cur.b7 = key_hi[23]               ^ tw1_c[tw_off_b + 7] ^ bits.b.b7;
+      cur.b6 = key_hi[22]               ^ tw1_c[tw_off_b + 6] ^ bits.b.b6;
+      cur.b5 = key_hi[21]               ^ tw1_c[tw_off_b + 5] ^ bits.b.b5;
+      cur.b4 = key_hi[20]               ^ tw1_c[tw_off_b + 4] ^ bits.b.b4;
+      cur.b3 = key_hi[19]               ^ tw1_c[tw_off_b + 3] ^ bits.b.b3;
+      cur.b2 = key_hi[18]               ^ tw1_c[tw_off_b + 2] ^ bits.b.b2;
+      cur.b1 = key_hi[17]               ^ tw1_c[tw_off_b + 1] ^ bits.b.b1;
+      cur.b0 = key_hi[16]               ^ tw1_c[tw_off_b]     ^ bits.b.b0;
       break;
     case 6:
-      bits.a.b7 = key_hi[15]               ^ tw1_c[7]  ^ bits.b.b7 ^ bits.a.b7;
-      bits.a.b6 = key_hi[14]               ^ tw1_c[6]  ^ bits.b.b6 ^ bits.a.b6;
-      bits.a.b5 = key_hi[13]               ^ tw1_c[5]  ^ bits.b.b5 ^ bits.a.b5;
-      bits.a.b4 = key_hi[12]               ^ tw1_c[4]  ^ bits.b.b4 ^ bits.a.b4;
-      bits.a.b3 = key_hi[11]               ^ tw1_c[3]  ^ bits.b.b3 ^ bits.a.b3;
-      bits.a.b2 = key_hi[10]               ^ tw1_c[2]  ^ bits.b.b2 ^ bits.a.b2;
-      bits.a.b1 = key_hi[9]                ^ tw1_c[1]  ^ bits.b.b1 ^ bits.a.b1;
-      bits.a.b0 = key_hi[8]                ^ tw1_c[0]  ^ bits.b.b0 ^ bits.a.b0;
-      break;
-    case 7:
-      bits.a.b7 = (0 - ((bidx >> 8)  & 1)) ^ tw1_c[47] ^ bits.b.b7 ^ bits.a.b7;
-      bits.a.b6 = (0 - ((bidx >> 7)  & 1)) ^ tw1_c[46] ^ bits.b.b6 ^ bits.a.b6;
-      bits.a.b5 = (0 - ((bidx >> 6)  & 1)) ^ tw1_c[45] ^ bits.b.b5 ^ bits.a.b5;
-      bits.a.b4 = (0 - ((bidx >> 5)  & 1)) ^ tw1_c[44] ^ bits.b.b4 ^ bits.a.b4;
-      bits.a.b3 = (0 - ((bidx >> 4)  & 1)) ^ tw1_c[43] ^ bits.b.b3 ^ bits.a.b3;
-      bits.a.b2 = (0 - ((bidx >> 3)  & 1)) ^ tw1_c[42] ^ bits.b.b2 ^ bits.a.b2;
-      bits.a.b1 = (0 - ((bidx >> 2)  & 1)) ^ tw1_c[41] ^ bits.b.b1 ^ bits.a.b1;
-      bits.a.b0 = (0 - ((bidx >> 1)  & 1)) ^ tw1_c[40] ^ bits.b.b0 ^ bits.a.b0;
+      cur.b7 = (0 - ((bidx >> 16) & 1)) ^ tw1_c[tw_off_b + 7] ^ bits.b.b7;
+      cur.b6 = (0 - ((bidx >> 15) & 1)) ^ tw1_c[tw_off_b + 6] ^ bits.b.b6;
+      cur.b5 = (0 - ((bidx >> 14) & 1)) ^ tw1_c[tw_off_b + 5] ^ bits.b.b5;
+      cur.b4 = (0 - ((bidx >> 13) & 1)) ^ tw1_c[tw_off_b + 4] ^ bits.b.b4;
+      cur.b3 = (0 - ((bidx >> 12) & 1)) ^ tw1_c[tw_off_b + 3] ^ bits.b.b3;
+      cur.b2 = (0 - ((bidx >> 11) & 1)) ^ tw1_c[tw_off_b + 2] ^ bits.b.b2;
+      cur.b1 = (0 - ((bidx >> 10) & 1)) ^ tw1_c[tw_off_b + 1] ^ bits.b.b1;
+      cur.b0 = (0 - ((bidx >> 9)  & 1)) ^ tw1_c[tw_off_b]     ^ bits.b.b0;
       break;
   }
 
-  switch (round) {
-    case 2:
-      bits.c.b7 = (0 - ((bidx >> 8)  & 1)) ^ tw1_c[31] ^ bits.b.b7 ^ bits.c.b7;
-      bits.c.b6 = (0 - ((bidx >> 7)  & 1)) ^ tw1_c[30] ^ bits.b.b6 ^ bits.c.b6;
-      bits.c.b5 = (0 - ((bidx >> 6)  & 1)) ^ tw1_c[29] ^ bits.b.b5 ^ bits.c.b5;
-      bits.c.b4 = (0 - ((bidx >> 5)  & 1)) ^ tw1_c[28] ^ bits.b.b4 ^ bits.c.b4;
-      bits.c.b3 = (0 - ((bidx >> 4)  & 1)) ^ tw1_c[27] ^ bits.b.b3 ^ bits.c.b3;
-      bits.c.b2 = (0 - ((bidx >> 3)  & 1)) ^ tw1_c[26] ^ bits.b.b2 ^ bits.c.b2;
-      bits.c.b1 = (0 - ((bidx >> 2)  & 1)) ^ tw1_c[25] ^ bits.b.b1 ^ bits.c.b1;
-      bits.c.b0 = (0 - ((bidx >> 1)  & 1)) ^ tw1_c[24] ^ bits.b.b0 ^ bits.c.b0;
-      break;
-    case 3:
-      bits.c.b7 = key_hi[23]               ^ tw1_c[7]  ^ bits.b.b7 ^ bits.c.b7;
-      bits.c.b6 = key_hi[22]               ^ tw1_c[6]  ^ bits.b.b6 ^ bits.c.b6;
-      bits.c.b5 = key_hi[21]               ^ tw1_c[5]  ^ bits.b.b5 ^ bits.c.b5;
-      bits.c.b4 = key_hi[20]               ^ tw1_c[4]  ^ bits.b.b4 ^ bits.c.b4;
-      bits.c.b3 = key_hi[19]               ^ tw1_c[3]  ^ bits.b.b3 ^ bits.c.b3;
-      bits.c.b2 = key_hi[18]               ^ tw1_c[2]  ^ bits.b.b2 ^ bits.c.b2;
-      bits.c.b1 = key_hi[17]               ^ tw1_c[1]  ^ bits.b.b1 ^ bits.c.b1;
-      bits.c.b0 = key_hi[16]               ^ tw1_c[0]  ^ bits.b.b0 ^ bits.c.b0;
-      break;
-    case 4:
-      bits.c.b7 = (0 - ((bidx >> 16) & 1)) ^ tw1_c[47] ^ bits.b.b7 ^ bits.c.b7;
-      bits.c.b6 = (0 - ((bidx >> 15) & 1)) ^ tw1_c[46] ^ bits.b.b6 ^ bits.c.b6;
-      bits.c.b5 = (0 - ((bidx >> 14) & 1)) ^ tw1_c[45] ^ bits.b.b5 ^ bits.c.b5;
-      bits.c.b4 = (0 - ((bidx >> 13) & 1)) ^ tw1_c[44] ^ bits.b.b4 ^ bits.c.b4;
-      bits.c.b3 = (0 - ((bidx >> 12) & 1)) ^ tw1_c[43] ^ bits.b.b3 ^ bits.c.b3;
-      bits.c.b2 = (0 - ((bidx >> 11) & 1)) ^ tw1_c[42] ^ bits.b.b2 ^ bits.c.b2;
-      bits.c.b1 = (0 - ((bidx >> 10) & 1)) ^ tw1_c[41] ^ bits.b.b1 ^ bits.c.b1;
-      bits.c.b0 = (0 - ((bidx >> 9)  & 1)) ^ tw1_c[40] ^ bits.b.b0 ^ bits.c.b0;
-      break;
-    case 5:
-      bits.c.b7 = (0 - ((tidx >> 2)  & 1)) ^ tw1_c[23] ^ bits.b.b7 ^ bits.c.b7;
-      bits.c.b6 = (0 - ((tidx >> 1)  & 1)) ^ tw1_c[22] ^ bits.b.b6 ^ bits.c.b6;
-      bits.c.b5 = (0 -  (tidx        & 1)) ^ tw1_c[21] ^ bits.b.b5 ^ bits.c.b5;
-      bits.c.b4 = 0xffff0000               ^ tw1_c[20] ^ bits.b.b4 ^ bits.c.b4;
-      bits.c.b3 = 0xff00ff00               ^ tw1_c[19] ^ bits.b.b3 ^ bits.c.b3;
-      bits.c.b2 = 0xf0f0f0f0               ^ tw1_c[18] ^ bits.b.b2 ^ bits.c.b2;
-      bits.c.b1 = 0xcccccccc               ^ tw1_c[17] ^ bits.b.b1 ^ bits.c.b1;
-      bits.c.b0 = 0xaaaaaaaa               ^ tw1_c[16] ^ bits.b.b0 ^ bits.c.b0;
-      break;
-    case 6:
-      bits.c.b7 = key_hi[7]                ^ tw1_c[63] ^ bits.b.b7 ^ bits.c.b7;
-      bits.c.b6 = key_hi[6]                ^ tw1_c[62] ^ bits.b.b6 ^ bits.c.b6;
-      bits.c.b5 = key_hi[5]                ^ tw1_c[61] ^ bits.b.b5 ^ bits.c.b5;
-      bits.c.b4 = key_hi[4]                ^ tw1_c[60] ^ bits.b.b4 ^ bits.c.b4;
-      bits.c.b3 = key_hi[3]                ^ tw1_c[59] ^ bits.b.b3 ^ bits.c.b3;
-      bits.c.b2 = key_hi[2]                ^ tw1_c[58] ^ bits.b.b2 ^ bits.c.b2;
-      bits.c.b1 = key_hi[1]                ^ tw1_c[57] ^ bits.b.b1 ^ bits.c.b1;
-      bits.c.b0 = key_hi[0]                ^ tw1_c[56] ^ bits.b.b0 ^ bits.c.b0;
-      break;
-    case 7:
-      bits.c.b7 = (0 -  (bidx        & 1)) ^ tw1_c[39] ^ bits.b.b7 ^ bits.c.b7;
-      bits.c.b6 = (0 - ((tidx >> 9)  & 1)) ^ tw1_c[38] ^ bits.b.b6 ^ bits.c.b6;
-      bits.c.b5 = (0 - ((tidx >> 8)  & 1)) ^ tw1_c[37] ^ bits.b.b5 ^ bits.c.b5;
-      bits.c.b4 = (0 - ((tidx >> 7)  & 1)) ^ tw1_c[36] ^ bits.b.b4 ^ bits.c.b4;
-      bits.c.b3 = (0 - ((tidx >> 6)  & 1)) ^ tw1_c[35] ^ bits.b.b3 ^ bits.c.b3;
-      bits.c.b2 = (0 - ((tidx >> 5)  & 1)) ^ tw1_c[34] ^ bits.b.b2 ^ bits.c.b2;
-      bits.c.b1 = (0 - ((tidx >> 4)  & 1)) ^ tw1_c[33] ^ bits.b.b1 ^ bits.c.b1;
-      bits.c.b0 = (0 - ((tidx >> 3)  & 1)) ^ tw1_c[32] ^ bits.b.b0 ^ bits.c.b0;
-      break;
-  }
-
-  switch (round) {
-    case 2:
-      bits.b.b7 = (0 -  (bidx        & 1)) ^ tw1_c[23] ^ bits.b.b7;
-      bits.b.b6 = (0 - ((tidx >> 9)  & 1)) ^ tw1_c[22] ^ bits.b.b6;
-      bits.b.b5 = (0 - ((tidx >> 8)  & 1)) ^ tw1_c[21] ^ bits.b.b5;
-      bits.b.b4 = (0 - ((tidx >> 7)  & 1)) ^ tw1_c[20] ^ bits.b.b4;
-      bits.b.b3 = (0 - ((tidx >> 6)  & 1)) ^ tw1_c[19] ^ bits.b.b3;
-      bits.b.b2 = (0 - ((tidx >> 5)  & 1)) ^ tw1_c[18] ^ bits.b.b2;
-      bits.b.b1 = (0 - ((tidx >> 4)  & 1)) ^ tw1_c[17] ^ bits.b.b1;
-      bits.b.b0 = (0 - ((tidx >> 3)  & 1)) ^ tw1_c[16] ^ bits.b.b0;
-      break;
-    case 3:
-      bits.b.b7 = key_hi[15]               ^ tw1_c[63] ^ bits.b.b7;
-      bits.b.b6 = key_hi[14]               ^ tw1_c[62] ^ bits.b.b6;
-      bits.b.b5 = key_hi[13]               ^ tw1_c[61] ^ bits.b.b5;
-      bits.b.b4 = key_hi[12]               ^ tw1_c[60] ^ bits.b.b4;
-      bits.b.b3 = key_hi[11]               ^ tw1_c[59] ^ bits.b.b3;
-      bits.b.b2 = key_hi[10]               ^ tw1_c[58] ^ bits.b.b2;
-      bits.b.b1 = key_hi[9]                ^ tw1_c[57] ^ bits.b.b1;
-      bits.b.b0 = key_hi[8]                ^ tw1_c[56] ^ bits.b.b0;
-      break;
-    case 4:
-      bits.b.b7 = (0 - ((bidx >> 8)  & 1)) ^ tw1_c[39] ^ bits.b.b7;
-      bits.b.b6 = (0 - ((bidx >> 7)  & 1)) ^ tw1_c[38] ^ bits.b.b6;
-      bits.b.b5 = (0 - ((bidx >> 6)  & 1)) ^ tw1_c[37] ^ bits.b.b5;
-      bits.b.b4 = (0 - ((bidx >> 5)  & 1)) ^ tw1_c[36] ^ bits.b.b4;
-      bits.b.b3 = (0 - ((bidx >> 4)  & 1)) ^ tw1_c[35] ^ bits.b.b3;
-      bits.b.b2 = (0 - ((bidx >> 3)  & 1)) ^ tw1_c[34] ^ bits.b.b2;
-      bits.b.b1 = (0 - ((bidx >> 2)  & 1)) ^ tw1_c[33] ^ bits.b.b1;
-      bits.b.b0 = (0 - ((bidx >> 1)  & 1)) ^ tw1_c[32] ^ bits.b.b0;
-      break;
-    case 5:
-      bits.b.b7 = key_hi[23]               ^ tw1_c[15] ^ bits.b.b7;
-      bits.b.b6 = key_hi[22]               ^ tw1_c[14] ^ bits.b.b6;
-      bits.b.b5 = key_hi[21]               ^ tw1_c[13] ^ bits.b.b5;
-      bits.b.b4 = key_hi[20]               ^ tw1_c[12] ^ bits.b.b4;
-      bits.b.b3 = key_hi[19]               ^ tw1_c[11] ^ bits.b.b3;
-      bits.b.b2 = key_hi[18]               ^ tw1_c[10] ^ bits.b.b2;
-      bits.b.b1 = key_hi[17]               ^ tw1_c[9]  ^ bits.b.b1;
-      bits.b.b0 = key_hi[16]               ^ tw1_c[8]  ^ bits.b.b0;
-      break;
-    case 6:
-      bits.b.b7 = (0 - ((bidx >> 16) & 1)) ^ tw1_c[55] ^ bits.b.b7;
-      bits.b.b6 = (0 - ((bidx >> 15) & 1)) ^ tw1_c[54] ^ bits.b.b6;
-      bits.b.b5 = (0 - ((bidx >> 14) & 1)) ^ tw1_c[53] ^ bits.b.b5;
-      bits.b.b4 = (0 - ((bidx >> 13) & 1)) ^ tw1_c[52] ^ bits.b.b4;
-      bits.b.b3 = (0 - ((bidx >> 12) & 1)) ^ tw1_c[51] ^ bits.b.b3;
-      bits.b.b2 = (0 - ((bidx >> 11) & 1)) ^ tw1_c[50] ^ bits.b.b2;
-      bits.b.b1 = (0 - ((bidx >> 10) & 1)) ^ tw1_c[49] ^ bits.b.b1;
-      bits.b.b0 = (0 - ((bidx >> 9)  & 1)) ^ tw1_c[48] ^ bits.b.b0;
-      break;
-    case 7:
-      bits.b.b7 = (0 - ((tidx >> 2) & 1))  ^ tw1_c[31] ^ bits.b.b7;
-      bits.b.b6 = (0 - ((tidx >> 1) & 1))  ^ tw1_c[30] ^ bits.b.b6;
-      bits.b.b5 = (0 -  (tidx       & 1))  ^ tw1_c[29] ^ bits.b.b5;
-      bits.b.b4 = 0xffff0000               ^ tw1_c[28] ^ bits.b.b4;
-      bits.b.b3 = 0xff00ff00               ^ tw1_c[27] ^ bits.b.b3;
-      bits.b.b2 = 0xf0f0f0f0               ^ tw1_c[26] ^ bits.b.b2;
-      bits.b.b1 = 0xcccccccc               ^ tw1_c[25] ^ bits.b.b1;
-      bits.b.b0 = 0xaaaaaaaa               ^ tw1_c[24] ^ bits.b.b0;
-      break;
+  if (last) {
+    bits.b = cur;
+  } else {
+    cur.b0 ^= bits.a.b0 ^ bits.c.b0;
+    cur.b1 ^= bits.a.b1 ^ bits.c.b1;
+    cur.b2 ^= bits.a.b2 ^ bits.c.b2;
+    cur.b3 ^= bits.a.b3 ^ bits.c.b3;
+    cur.b4 ^= bits.a.b4 ^ bits.c.b4;
+    cur.b5 ^= bits.a.b5 ^ bits.c.b5;
+    cur.b6 ^= bits.a.b6 ^ bits.c.b6;
+    cur.b7 ^= bits.a.b7 ^ bits.c.b7;
+    bits.b.b0 = s0(cur);
+    bits.b.b1 = s1(cur);
+    bits.b.b2 = s2(cur);
+    bits.b.b3 = s3(cur);
+    bits.b.b4 = s4(cur);
+    bits.b.b5 = s5(cur);
+    bits.b.b6 = s6(cur);
+    bits.b.b7 = s7(cur);
   }
 
   return bits;
 }
 
-__global__ void brute_force_8(int *ret, volatile int off) {
+/* Brute force search for key. The five least significant bytes of matching
+   keys are placed in ret. */
+template<int rounds>
+__launch_bounds__(1024, 1)
+__global__ void brute_force(int *ret, volatile int off) {
   __shared__ int pt[24];
   __shared__ int ct[24];
-  __shared__ int key[24];
+  __shared__ int key_12[24];
   __shared__ int found[100];
   if (threadIdx.x < 24) {
     pt[threadIdx.x] = pt1_c[threadIdx.x + off];
     ct[threadIdx.x] = ct1_c[threadIdx.x + off];
-    key[threadIdx.x] = key_c[threadIdx.x + off];
+    key_12[threadIdx.x] = key_c[threadIdx.x + off];
     found[threadIdx.x] = 0;
   }
 
@@ -838,10 +746,10 @@ __global__ void brute_force_8(int *ret, volatile int off) {
   bits.c.b0 = pt[0];
 
   #pragma unroll
-  for (int i = 2; i < 7; i++) {
-    bits = encrypt_round(bits, i, &key[0]);
+  for (int i = 2; i < rounds; i++) {
+    bits = encrypt_round<false>(bits, i, &key_12[0]);
   }
-  bits = encrypt_last_round(bits, 7, &key[0]);
+  bits = encrypt_round<true>(bits, rounds, &key_12[0]);
 
   int rr = 0;
   rr |= bits.a.b7 ^ ct[23];
@@ -869,6 +777,7 @@ __global__ void brute_force_8(int *ret, volatile int off) {
   rr |= bits.c.b1 ^ ct[1];
   rr |= bits.c.b0 ^ ct[0];
 
+  /* Put matches in shared memory. */
   int ptr;
   if (rr != 0xffffffff) {
     ptr = atomicAdd_block(found, 1);
@@ -882,12 +791,14 @@ __global__ void brute_force_8(int *ret, volatile int off) {
     return;
   }
 
+  /* Get global memory offset for matches found in block. */
   if (threadIdx.x == 0) {
     found[1] = atomicAdd(ret, found[0]) * 2 + 1;
   }
 
   __syncthreads();
 
+  /* Copy matches to global memory. */
   if (threadIdx.x < found[0]) {
     ptr = found[1] + threadIdx.x * 2;
     ret[ptr]     = found[(threadIdx.x * 2) + 2];
@@ -908,337 +819,336 @@ __device__ __forceinline__ eightbits sbox(eightbits in) {
   return out;
 }
 
+/* Tests candidates found by find_candidates. Used when cracking 6, 7, and 8
+   rounds. The five least significant bytes of matching keys are placed in ret. */
 template <int rounds>
 __launch_bounds__(1024, 1)
-__global__ void test_candidates(int *in, int *out, int num_candidates) {
-
-  /*__shared__ int keys_in[128];
-  if (threadIdx.x < 128) {
-    keys_in[threadIdx.x] = in[((blockIdx.x << 7) | threadIdx.x) + 1];
-  }
-
-  __syncthreads();
-
-  int k3456 = keys_in[threadIdx.x >> 3];*/
+__global__ void test_candidates(int *in, int *out, int num_candidates, int offset) {
 
   int ptr = ((blockIdx.x << 7) | (threadIdx.x >> 3));
   if (ptr >= num_candidates) {
     return;
   }
-  //int k3456 = in[ptr + 1];
 
+  volatile __shared__ int pt1[24];
+  volatile __shared__ int ct1[24];
+  volatile __shared__ int tw1[64];
+  volatile __shared__ int key_12[16];
+  volatile __shared__ int k3456[1024];
   __shared__ int found[1024];
-  __shared__ int k3456[1024];
   __shared__ eightbits aa[1024];
+
+  if (threadIdx.x < 16) {
+    key_12[threadIdx.x] = key_c[threadIdx.x + offset * 16];
+  }
+  if (threadIdx.x < 24) {
+    pt1[threadIdx.x] = pt1_c[threadIdx.x + offset * 24];
+    ct1[threadIdx.x] = ct1_c[threadIdx.x + offset * 24];
+  }
+  if (threadIdx.x < 64) {
+    tw1[threadIdx.x] = tw1_c[threadIdx.x + offset * 64];
+  }
+
+  __syncthreads();
 
   k3456[threadIdx.x] = in[ptr + 1];
 
   eightbits bb, cc;
 
   /* Round 1. */
-  bb.b0 = pt1_c[8];
-  bb.b1 = pt1_c[9];
-  bb.b2 = pt1_c[10];
-  bb.b3 = pt1_c[11];
-  bb.b4 = pt1_c[12];
-  bb.b5 = pt1_c[13];
-  bb.b6 = pt1_c[14];
-  bb.b7 = pt1_c[15];
-  aa[threadIdx.x].b0 = pt1_c[16] ^ bb.b0 ^ key_c[8]  ^ tw1_c[56];
-  aa[threadIdx.x].b1 = pt1_c[17] ^ bb.b1 ^ key_c[9]  ^ tw1_c[57];
-  aa[threadIdx.x].b2 = pt1_c[18] ^ bb.b2 ^ key_c[10] ^ tw1_c[58];
-  aa[threadIdx.x].b3 = pt1_c[19] ^ bb.b3 ^ key_c[11] ^ tw1_c[59];
-  aa[threadIdx.x].b4 = pt1_c[20] ^ bb.b4 ^ key_c[12] ^ tw1_c[60];
-  aa[threadIdx.x].b5 = pt1_c[21] ^ bb.b5 ^ key_c[13] ^ tw1_c[61];
-  aa[threadIdx.x].b6 = pt1_c[22] ^ bb.b6 ^ key_c[14] ^ tw1_c[62];
-  aa[threadIdx.x].b7 = pt1_c[23] ^ bb.b7 ^ key_c[15] ^ tw1_c[63];
+  bb.b0 = pt1[8];
+  bb.b1 = pt1[9];
+  bb.b2 = pt1[10];
+  bb.b3 = pt1[11];
+  bb.b4 = pt1[12];
+  bb.b5 = pt1[13];
+  bb.b6 = pt1[14];
+  bb.b7 = pt1[15];
+  aa[threadIdx.x].b0 = pt1[16] ^ bb.b0 ^ key_12[8]  ^ tw1[56];
+  aa[threadIdx.x].b1 = pt1[17] ^ bb.b1 ^ key_12[9]  ^ tw1[57];
+  aa[threadIdx.x].b2 = pt1[18] ^ bb.b2 ^ key_12[10] ^ tw1[58];
+  aa[threadIdx.x].b3 = pt1[19] ^ bb.b3 ^ key_12[11] ^ tw1[59];
+  aa[threadIdx.x].b4 = pt1[20] ^ bb.b4 ^ key_12[12] ^ tw1[60];
+  aa[threadIdx.x].b5 = pt1[21] ^ bb.b5 ^ key_12[13] ^ tw1[61];
+  aa[threadIdx.x].b6 = pt1[22] ^ bb.b6 ^ key_12[14] ^ tw1[62];
+  aa[threadIdx.x].b7 = pt1[23] ^ bb.b7 ^ key_12[15] ^ tw1[63];
   aa[threadIdx.x] = sbox(aa[threadIdx.x]);
 
-  cc.b0 = pt1_c[0]  ^ bb.b0 ^ key_c[0] ^ tw1_c[48];
-  cc.b1 = pt1_c[1]  ^ bb.b1 ^ key_c[1] ^ tw1_c[49];
-  cc.b2 = pt1_c[2]  ^ bb.b2 ^ key_c[2] ^ tw1_c[50];
-  cc.b3 = pt1_c[3]  ^ bb.b3 ^ key_c[3] ^ tw1_c[51];
-  cc.b4 = pt1_c[4]  ^ bb.b4 ^ key_c[4] ^ tw1_c[52];
-  cc.b5 = pt1_c[5]  ^ bb.b5 ^ key_c[5] ^ tw1_c[53];
-  cc.b6 = pt1_c[6]  ^ bb.b6 ^ key_c[6] ^ tw1_c[54];
-  cc.b7 = pt1_c[7]  ^ bb.b7 ^ key_c[7] ^ tw1_c[55];
+  cc.b0 = pt1[0]  ^ bb.b0 ^ key_12[0] ^ tw1[48];
+  cc.b1 = pt1[1]  ^ bb.b1 ^ key_12[1] ^ tw1[49];
+  cc.b2 = pt1[2]  ^ bb.b2 ^ key_12[2] ^ tw1[50];
+  cc.b3 = pt1[3]  ^ bb.b3 ^ key_12[3] ^ tw1[51];
+  cc.b4 = pt1[4]  ^ bb.b4 ^ key_12[4] ^ tw1[52];
+  cc.b5 = pt1[5]  ^ bb.b5 ^ key_12[5] ^ tw1[53];
+  cc.b6 = pt1[6]  ^ bb.b6 ^ key_12[6] ^ tw1[54];
+  cc.b7 = pt1[7]  ^ bb.b7 ^ key_12[7] ^ tw1[55];
   cc = sbox(cc);
 
-  bb.b0 ^= aa[threadIdx.x].b0  ^ cc.b0 ^ (0 - ((k3456[threadIdx.x] >> 24) & 1)) ^ tw1_c[40];
-  bb.b1 ^= aa[threadIdx.x].b1  ^ cc.b1 ^ (0 - ((k3456[threadIdx.x] >> 25) & 1)) ^ tw1_c[41];
-  bb.b2 ^= aa[threadIdx.x].b2  ^ cc.b2 ^ (0 - ((k3456[threadIdx.x] >> 26) & 1)) ^ tw1_c[42];
-  bb.b3 ^= aa[threadIdx.x].b3  ^ cc.b3 ^ (0 - ((k3456[threadIdx.x] >> 27) & 1)) ^ tw1_c[43];
-  bb.b4 ^= aa[threadIdx.x].b4  ^ cc.b4 ^ (0 - ((k3456[threadIdx.x] >> 28) & 1)) ^ tw1_c[44];
-  bb.b5 ^= aa[threadIdx.x].b5  ^ cc.b5 ^ (0 - ((k3456[threadIdx.x] >> 29) & 1)) ^ tw1_c[45];
-  bb.b6 ^= aa[threadIdx.x].b6  ^ cc.b6 ^ (0 - ((k3456[threadIdx.x] >> 30) & 1)) ^ tw1_c[46];
-  bb.b7 ^= aa[threadIdx.x].b7  ^ cc.b7 ^ (0 - ((k3456[threadIdx.x] >> 31) & 1)) ^ tw1_c[47];
+  bb.b0 ^= aa[threadIdx.x].b0  ^ cc.b0 ^ (0 - ((k3456[threadIdx.x] >> 24) & 1)) ^ tw1[40];
+  bb.b1 ^= aa[threadIdx.x].b1  ^ cc.b1 ^ (0 - ((k3456[threadIdx.x] >> 25) & 1)) ^ tw1[41];
+  bb.b2 ^= aa[threadIdx.x].b2  ^ cc.b2 ^ (0 - ((k3456[threadIdx.x] >> 26) & 1)) ^ tw1[42];
+  bb.b3 ^= aa[threadIdx.x].b3  ^ cc.b3 ^ (0 - ((k3456[threadIdx.x] >> 27) & 1)) ^ tw1[43];
+  bb.b4 ^= aa[threadIdx.x].b4  ^ cc.b4 ^ (0 - ((k3456[threadIdx.x] >> 28) & 1)) ^ tw1[44];
+  bb.b5 ^= aa[threadIdx.x].b5  ^ cc.b5 ^ (0 - ((k3456[threadIdx.x] >> 29) & 1)) ^ tw1[45];
+  bb.b6 ^= aa[threadIdx.x].b6  ^ cc.b6 ^ (0 - ((k3456[threadIdx.x] >> 30) & 1)) ^ tw1[46];
+  bb.b7 ^= aa[threadIdx.x].b7  ^ cc.b7 ^ (0 - ((k3456[threadIdx.x] >> 31) & 1)) ^ tw1[47];
   bb = sbox(bb);
 
   /* Round 2. */
-  aa[threadIdx.x].b0 ^= bb.b0 ^ (0 - ((k3456[threadIdx.x] >> 16) & 1)) ^ tw1_c[32];
-  aa[threadIdx.x].b1 ^= bb.b1 ^ (0 - ((k3456[threadIdx.x] >> 17) & 1)) ^ tw1_c[33];
-  aa[threadIdx.x].b2 ^= bb.b2 ^ (0 - ((k3456[threadIdx.x] >> 18) & 1)) ^ tw1_c[34];
-  aa[threadIdx.x].b3 ^= bb.b3 ^ (0 - ((k3456[threadIdx.x] >> 19) & 1)) ^ tw1_c[35];
-  aa[threadIdx.x].b4 ^= bb.b4 ^ (0 - ((k3456[threadIdx.x] >> 20) & 1)) ^ tw1_c[36];
-  aa[threadIdx.x].b5 ^= bb.b5 ^ (0 - ((k3456[threadIdx.x] >> 21) & 1)) ^ tw1_c[37];
-  aa[threadIdx.x].b6 ^= bb.b6 ^ (0 - ((k3456[threadIdx.x] >> 22) & 1)) ^ tw1_c[38];
-  aa[threadIdx.x].b7 ^= bb.b7 ^ (0 - ((k3456[threadIdx.x] >> 23) & 1)) ^ tw1_c[39];
+  aa[threadIdx.x].b0 ^= bb.b0 ^ (0 - ((k3456[threadIdx.x] >> 16) & 1)) ^ tw1[32];
+  aa[threadIdx.x].b1 ^= bb.b1 ^ (0 - ((k3456[threadIdx.x] >> 17) & 1)) ^ tw1[33];
+  aa[threadIdx.x].b2 ^= bb.b2 ^ (0 - ((k3456[threadIdx.x] >> 18) & 1)) ^ tw1[34];
+  aa[threadIdx.x].b3 ^= bb.b3 ^ (0 - ((k3456[threadIdx.x] >> 19) & 1)) ^ tw1[35];
+  aa[threadIdx.x].b4 ^= bb.b4 ^ (0 - ((k3456[threadIdx.x] >> 20) & 1)) ^ tw1[36];
+  aa[threadIdx.x].b5 ^= bb.b5 ^ (0 - ((k3456[threadIdx.x] >> 21) & 1)) ^ tw1[37];
+  aa[threadIdx.x].b6 ^= bb.b6 ^ (0 - ((k3456[threadIdx.x] >> 22) & 1)) ^ tw1[38];
+  aa[threadIdx.x].b7 ^= bb.b7 ^ (0 - ((k3456[threadIdx.x] >> 23) & 1)) ^ tw1[39];
   aa[threadIdx.x] = sbox(aa[threadIdx.x]);
 
-  cc.b0 ^= bb.b0 ^ (0 - ((k3456[threadIdx.x] >> 8)  & 1)) ^ tw1_c[24];
-  cc.b1 ^= bb.b1 ^ (0 - ((k3456[threadIdx.x] >> 9)  & 1)) ^ tw1_c[25];
-  cc.b2 ^= bb.b2 ^ (0 - ((k3456[threadIdx.x] >> 10) & 1)) ^ tw1_c[26];
-  cc.b3 ^= bb.b3 ^ (0 - ((k3456[threadIdx.x] >> 11) & 1)) ^ tw1_c[27];
-  cc.b4 ^= bb.b4 ^ (0 - ((k3456[threadIdx.x] >> 12) & 1)) ^ tw1_c[28];
-  cc.b5 ^= bb.b5 ^ (0 - ((k3456[threadIdx.x] >> 13) & 1)) ^ tw1_c[29];
-  cc.b6 ^= bb.b6 ^ (0 - ((k3456[threadIdx.x] >> 14) & 1)) ^ tw1_c[30];
-  cc.b7 ^= bb.b7 ^ (0 - ((k3456[threadIdx.x] >> 15) & 1)) ^ tw1_c[31];
+  cc.b0 ^= bb.b0 ^ (0 - ((k3456[threadIdx.x] >> 8)  & 1)) ^ tw1[24];
+  cc.b1 ^= bb.b1 ^ (0 - ((k3456[threadIdx.x] >> 9)  & 1)) ^ tw1[25];
+  cc.b2 ^= bb.b2 ^ (0 - ((k3456[threadIdx.x] >> 10) & 1)) ^ tw1[26];
+  cc.b3 ^= bb.b3 ^ (0 - ((k3456[threadIdx.x] >> 11) & 1)) ^ tw1[27];
+  cc.b4 ^= bb.b4 ^ (0 - ((k3456[threadIdx.x] >> 12) & 1)) ^ tw1[28];
+  cc.b5 ^= bb.b5 ^ (0 - ((k3456[threadIdx.x] >> 13) & 1)) ^ tw1[29];
+  cc.b6 ^= bb.b6 ^ (0 - ((k3456[threadIdx.x] >> 14) & 1)) ^ tw1[30];
+  cc.b7 ^= bb.b7 ^ (0 - ((k3456[threadIdx.x] >> 15) & 1)) ^ tw1[31];
   cc = sbox(cc);
 
-  bb.b0 ^= aa[threadIdx.x].b0 ^ cc.b0 ^ (0 - ((k3456[threadIdx.x] >> 0) & 1)) ^ tw1_c[16];
-  bb.b1 ^= aa[threadIdx.x].b1 ^ cc.b1 ^ (0 - ((k3456[threadIdx.x] >> 1) & 1)) ^ tw1_c[17];
-  bb.b2 ^= aa[threadIdx.x].b2 ^ cc.b2 ^ (0 - ((k3456[threadIdx.x] >> 2) & 1)) ^ tw1_c[18];
-  bb.b3 ^= aa[threadIdx.x].b3 ^ cc.b3 ^ (0 - ((k3456[threadIdx.x] >> 3) & 1)) ^ tw1_c[19];
-  bb.b4 ^= aa[threadIdx.x].b4 ^ cc.b4 ^ (0 - ((k3456[threadIdx.x] >> 4) & 1)) ^ tw1_c[20];
-  bb.b5 ^= aa[threadIdx.x].b5 ^ cc.b5 ^ (0 - ((k3456[threadIdx.x] >> 5) & 1)) ^ tw1_c[21];
-  bb.b6 ^= aa[threadIdx.x].b6 ^ cc.b6 ^ (0 - ((k3456[threadIdx.x] >> 6) & 1)) ^ tw1_c[22];
-  bb.b7 ^= aa[threadIdx.x].b7 ^ cc.b7 ^ (0 - ((k3456[threadIdx.x] >> 7) & 1)) ^ tw1_c[23];
+  bb.b0 ^= aa[threadIdx.x].b0 ^ cc.b0 ^ (0 - ((k3456[threadIdx.x] >> 0) & 1)) ^ tw1[16];
+  bb.b1 ^= aa[threadIdx.x].b1 ^ cc.b1 ^ (0 - ((k3456[threadIdx.x] >> 1) & 1)) ^ tw1[17];
+  bb.b2 ^= aa[threadIdx.x].b2 ^ cc.b2 ^ (0 - ((k3456[threadIdx.x] >> 2) & 1)) ^ tw1[18];
+  bb.b3 ^= aa[threadIdx.x].b3 ^ cc.b3 ^ (0 - ((k3456[threadIdx.x] >> 3) & 1)) ^ tw1[19];
+  bb.b4 ^= aa[threadIdx.x].b4 ^ cc.b4 ^ (0 - ((k3456[threadIdx.x] >> 4) & 1)) ^ tw1[20];
+  bb.b5 ^= aa[threadIdx.x].b5 ^ cc.b5 ^ (0 - ((k3456[threadIdx.x] >> 5) & 1)) ^ tw1[21];
+  bb.b6 ^= aa[threadIdx.x].b6 ^ cc.b6 ^ (0 - ((k3456[threadIdx.x] >> 6) & 1)) ^ tw1[22];
+  bb.b7 ^= aa[threadIdx.x].b7 ^ cc.b7 ^ (0 - ((k3456[threadIdx.x] >> 7) & 1)) ^ tw1[23];
   bb = sbox(bb);
 
   /* Round 3. */
-  aa[threadIdx.x].b0 ^= bb.b0 ^ 0xaaaaaaaa                     ^ tw1_c[8];
-  aa[threadIdx.x].b1 ^= bb.b1 ^ 0xcccccccc                     ^ tw1_c[9];
-  aa[threadIdx.x].b2 ^= bb.b2 ^ 0xf0f0f0f0                     ^ tw1_c[10];
-  aa[threadIdx.x].b3 ^= bb.b3 ^ 0xff00ff00                     ^ tw1_c[11];
-  aa[threadIdx.x].b4 ^= bb.b4 ^ 0xffff0000                     ^ tw1_c[12];
-  aa[threadIdx.x].b5 ^= bb.b5 ^ (0 -  (threadIdx.x       & 1)) ^ tw1_c[13];
-  aa[threadIdx.x].b6 ^= bb.b6 ^ (0 - ((threadIdx.x >> 1) & 1)) ^ tw1_c[14];
-  aa[threadIdx.x].b7 ^= bb.b7 ^ (0 - ((threadIdx.x >> 2) & 1)) ^ tw1_c[15];
+  aa[threadIdx.x].b0 ^= bb.b0 ^ 0xaaaaaaaa                     ^ tw1[8];
+  aa[threadIdx.x].b1 ^= bb.b1 ^ 0xcccccccc                     ^ tw1[9];
+  aa[threadIdx.x].b2 ^= bb.b2 ^ 0xf0f0f0f0                     ^ tw1[10];
+  aa[threadIdx.x].b3 ^= bb.b3 ^ 0xff00ff00                     ^ tw1[11];
+  aa[threadIdx.x].b4 ^= bb.b4 ^ 0xffff0000                     ^ tw1[12];
+  aa[threadIdx.x].b5 ^= bb.b5 ^ (0 -  (threadIdx.x       & 1)) ^ tw1[13];
+  aa[threadIdx.x].b6 ^= bb.b6 ^ (0 - ((threadIdx.x >> 1) & 1)) ^ tw1[14];
+  aa[threadIdx.x].b7 ^= bb.b7 ^ (0 - ((threadIdx.x >> 2) & 1)) ^ tw1[15];
   aa[threadIdx.x] = sbox(aa[threadIdx.x]);
 
-  cc.b0 ^= bb.b0 ^ key_c[8] ^  tw1_c[0];
-  cc.b1 ^= bb.b1 ^ key_c[9] ^  tw1_c[1];
-  cc.b2 ^= bb.b2 ^ key_c[10] ^ tw1_c[2];
-  cc.b3 ^= bb.b3 ^ key_c[11] ^ tw1_c[3];
-  cc.b4 ^= bb.b4 ^ key_c[12] ^ tw1_c[4];
-  cc.b5 ^= bb.b5 ^ key_c[13] ^ tw1_c[5];
-  cc.b6 ^= bb.b6 ^ key_c[14] ^ tw1_c[6];
-  cc.b7 ^= bb.b7 ^ key_c[15] ^ tw1_c[7];
+  cc.b0 ^= bb.b0 ^ key_12[8] ^  tw1[0];
+  cc.b1 ^= bb.b1 ^ key_12[9] ^  tw1[1];
+  cc.b2 ^= bb.b2 ^ key_12[10] ^ tw1[2];
+  cc.b3 ^= bb.b3 ^ key_12[11] ^ tw1[3];
+  cc.b4 ^= bb.b4 ^ key_12[12] ^ tw1[4];
+  cc.b5 ^= bb.b5 ^ key_12[13] ^ tw1[5];
+  cc.b6 ^= bb.b6 ^ key_12[14] ^ tw1[6];
+  cc.b7 ^= bb.b7 ^ key_12[15] ^ tw1[7];
   cc = sbox(cc);
 
-  bb.b0 ^= aa[threadIdx.x].b0 ^ cc.b0 ^ key_c[0] ^ tw1_c[56];
-  bb.b1 ^= aa[threadIdx.x].b1 ^ cc.b1 ^ key_c[1] ^ tw1_c[57];
-  bb.b2 ^= aa[threadIdx.x].b2 ^ cc.b2 ^ key_c[2] ^ tw1_c[58];
-  bb.b3 ^= aa[threadIdx.x].b3 ^ cc.b3 ^ key_c[3] ^ tw1_c[59];
-  bb.b4 ^= aa[threadIdx.x].b4 ^ cc.b4 ^ key_c[4] ^ tw1_c[60];
-  bb.b5 ^= aa[threadIdx.x].b5 ^ cc.b5 ^ key_c[5] ^ tw1_c[61];
-  bb.b6 ^= aa[threadIdx.x].b6 ^ cc.b6 ^ key_c[6] ^ tw1_c[62];
-  bb.b7 ^= aa[threadIdx.x].b7 ^ cc.b7 ^ key_c[7] ^ tw1_c[63];
+  bb.b0 ^= aa[threadIdx.x].b0 ^ cc.b0 ^ key_12[0] ^ tw1[56];
+  bb.b1 ^= aa[threadIdx.x].b1 ^ cc.b1 ^ key_12[1] ^ tw1[57];
+  bb.b2 ^= aa[threadIdx.x].b2 ^ cc.b2 ^ key_12[2] ^ tw1[58];
+  bb.b3 ^= aa[threadIdx.x].b3 ^ cc.b3 ^ key_12[3] ^ tw1[59];
+  bb.b4 ^= aa[threadIdx.x].b4 ^ cc.b4 ^ key_12[4] ^ tw1[60];
+  bb.b5 ^= aa[threadIdx.x].b5 ^ cc.b5 ^ key_12[5] ^ tw1[61];
+  bb.b6 ^= aa[threadIdx.x].b6 ^ cc.b6 ^ key_12[6] ^ tw1[62];
+  bb.b7 ^= aa[threadIdx.x].b7 ^ cc.b7 ^ key_12[7] ^ tw1[63];
   bb = sbox(bb);
 
   /* Round 4. */
-  aa[threadIdx.x].b0 ^= bb.b0 ^ (0 - ((k3456[threadIdx.x] >> 24) & 1)) ^ tw1_c[48];
-  aa[threadIdx.x].b1 ^= bb.b1 ^ (0 - ((k3456[threadIdx.x] >> 25) & 1)) ^ tw1_c[49];
-  aa[threadIdx.x].b2 ^= bb.b2 ^ (0 - ((k3456[threadIdx.x] >> 26) & 1)) ^ tw1_c[50];
-  aa[threadIdx.x].b3 ^= bb.b3 ^ (0 - ((k3456[threadIdx.x] >> 27) & 1)) ^ tw1_c[51];
-  aa[threadIdx.x].b4 ^= bb.b4 ^ (0 - ((k3456[threadIdx.x] >> 28) & 1)) ^ tw1_c[52];
-  aa[threadIdx.x].b5 ^= bb.b5 ^ (0 - ((k3456[threadIdx.x] >> 29) & 1)) ^ tw1_c[53];
-  aa[threadIdx.x].b6 ^= bb.b6 ^ (0 - ((k3456[threadIdx.x] >> 30) & 1)) ^ tw1_c[54];
-  aa[threadIdx.x].b7 ^= bb.b7 ^ (0 - ((k3456[threadIdx.x] >> 31) & 1)) ^ tw1_c[55];
+  aa[threadIdx.x].b0 ^= bb.b0 ^ (0 - ((k3456[threadIdx.x] >> 24) & 1)) ^ tw1[48];
+  aa[threadIdx.x].b1 ^= bb.b1 ^ (0 - ((k3456[threadIdx.x] >> 25) & 1)) ^ tw1[49];
+  aa[threadIdx.x].b2 ^= bb.b2 ^ (0 - ((k3456[threadIdx.x] >> 26) & 1)) ^ tw1[50];
+  aa[threadIdx.x].b3 ^= bb.b3 ^ (0 - ((k3456[threadIdx.x] >> 27) & 1)) ^ tw1[51];
+  aa[threadIdx.x].b4 ^= bb.b4 ^ (0 - ((k3456[threadIdx.x] >> 28) & 1)) ^ tw1[52];
+  aa[threadIdx.x].b5 ^= bb.b5 ^ (0 - ((k3456[threadIdx.x] >> 29) & 1)) ^ tw1[53];
+  aa[threadIdx.x].b6 ^= bb.b6 ^ (0 - ((k3456[threadIdx.x] >> 30) & 1)) ^ tw1[54];
+  aa[threadIdx.x].b7 ^= bb.b7 ^ (0 - ((k3456[threadIdx.x] >> 31) & 1)) ^ tw1[55];
   aa[threadIdx.x] = sbox(aa[threadIdx.x]);
 
-  cc.b0 ^= bb.b0 ^ (0 - ((k3456[threadIdx.x] >> 16) & 1)) ^ tw1_c[40];
-  cc.b1 ^= bb.b1 ^ (0 - ((k3456[threadIdx.x] >> 17) & 1)) ^ tw1_c[41];
-  cc.b2 ^= bb.b2 ^ (0 - ((k3456[threadIdx.x] >> 18) & 1)) ^ tw1_c[42];
-  cc.b3 ^= bb.b3 ^ (0 - ((k3456[threadIdx.x] >> 19) & 1)) ^ tw1_c[43];
-  cc.b4 ^= bb.b4 ^ (0 - ((k3456[threadIdx.x] >> 20) & 1)) ^ tw1_c[44];
-  cc.b5 ^= bb.b5 ^ (0 - ((k3456[threadIdx.x] >> 21) & 1)) ^ tw1_c[45];
-  cc.b6 ^= bb.b6 ^ (0 - ((k3456[threadIdx.x] >> 22) & 1)) ^ tw1_c[46];
-  cc.b7 ^= bb.b7 ^ (0 - ((k3456[threadIdx.x] >> 23) & 1)) ^ tw1_c[47];
+  cc.b0 ^= bb.b0 ^ (0 - ((k3456[threadIdx.x] >> 16) & 1)) ^ tw1[40];
+  cc.b1 ^= bb.b1 ^ (0 - ((k3456[threadIdx.x] >> 17) & 1)) ^ tw1[41];
+  cc.b2 ^= bb.b2 ^ (0 - ((k3456[threadIdx.x] >> 18) & 1)) ^ tw1[42];
+  cc.b3 ^= bb.b3 ^ (0 - ((k3456[threadIdx.x] >> 19) & 1)) ^ tw1[43];
+  cc.b4 ^= bb.b4 ^ (0 - ((k3456[threadIdx.x] >> 20) & 1)) ^ tw1[44];
+  cc.b5 ^= bb.b5 ^ (0 - ((k3456[threadIdx.x] >> 21) & 1)) ^ tw1[45];
+  cc.b6 ^= bb.b6 ^ (0 - ((k3456[threadIdx.x] >> 22) & 1)) ^ tw1[46];
+  cc.b7 ^= bb.b7 ^ (0 - ((k3456[threadIdx.x] >> 23) & 1)) ^ tw1[47];
   cc = sbox(cc);
 
-  bb.b0 ^= aa[threadIdx.x].b0 ^ cc.b0 ^ (0 - ((k3456[threadIdx.x] >> 8)  & 1)) ^ tw1_c[32];
-  bb.b1 ^= aa[threadIdx.x].b1 ^ cc.b1 ^ (0 - ((k3456[threadIdx.x] >> 9)  & 1)) ^ tw1_c[33];
-  bb.b2 ^= aa[threadIdx.x].b2 ^ cc.b2 ^ (0 - ((k3456[threadIdx.x] >> 10) & 1)) ^ tw1_c[34];
-  bb.b3 ^= aa[threadIdx.x].b3 ^ cc.b3 ^ (0 - ((k3456[threadIdx.x] >> 11) & 1)) ^ tw1_c[35];
-  bb.b4 ^= aa[threadIdx.x].b4 ^ cc.b4 ^ (0 - ((k3456[threadIdx.x] >> 12) & 1)) ^ tw1_c[36];
-  bb.b5 ^= aa[threadIdx.x].b5 ^ cc.b5 ^ (0 - ((k3456[threadIdx.x] >> 13) & 1)) ^ tw1_c[37];
-  bb.b6 ^= aa[threadIdx.x].b6 ^ cc.b6 ^ (0 - ((k3456[threadIdx.x] >> 14) & 1)) ^ tw1_c[38];
-  bb.b7 ^= aa[threadIdx.x].b7 ^ cc.b7 ^ (0 - ((k3456[threadIdx.x] >> 15) & 1)) ^ tw1_c[39];
+  bb.b0 ^= aa[threadIdx.x].b0 ^ cc.b0 ^ (0 - ((k3456[threadIdx.x] >> 8)  & 1)) ^ tw1[32];
+  bb.b1 ^= aa[threadIdx.x].b1 ^ cc.b1 ^ (0 - ((k3456[threadIdx.x] >> 9)  & 1)) ^ tw1[33];
+  bb.b2 ^= aa[threadIdx.x].b2 ^ cc.b2 ^ (0 - ((k3456[threadIdx.x] >> 10) & 1)) ^ tw1[34];
+  bb.b3 ^= aa[threadIdx.x].b3 ^ cc.b3 ^ (0 - ((k3456[threadIdx.x] >> 11) & 1)) ^ tw1[35];
+  bb.b4 ^= aa[threadIdx.x].b4 ^ cc.b4 ^ (0 - ((k3456[threadIdx.x] >> 12) & 1)) ^ tw1[36];
+  bb.b5 ^= aa[threadIdx.x].b5 ^ cc.b5 ^ (0 - ((k3456[threadIdx.x] >> 13) & 1)) ^ tw1[37];
+  bb.b6 ^= aa[threadIdx.x].b6 ^ cc.b6 ^ (0 - ((k3456[threadIdx.x] >> 14) & 1)) ^ tw1[38];
+  bb.b7 ^= aa[threadIdx.x].b7 ^ cc.b7 ^ (0 - ((k3456[threadIdx.x] >> 15) & 1)) ^ tw1[39];
   bb = sbox(bb);
 
   /* Round 5. */
-  aa[threadIdx.x].b0 ^= bb.b0 ^ (0 - ((k3456[threadIdx.x] >> 0) & 1)) ^ tw1_c[24];
-  aa[threadIdx.x].b1 ^= bb.b1 ^ (0 - ((k3456[threadIdx.x] >> 1) & 1)) ^ tw1_c[25];
-  aa[threadIdx.x].b2 ^= bb.b2 ^ (0 - ((k3456[threadIdx.x] >> 2) & 1)) ^ tw1_c[26];
-  aa[threadIdx.x].b3 ^= bb.b3 ^ (0 - ((k3456[threadIdx.x] >> 3) & 1)) ^ tw1_c[27];
-  aa[threadIdx.x].b4 ^= bb.b4 ^ (0 - ((k3456[threadIdx.x] >> 4) & 1)) ^ tw1_c[28];
-  aa[threadIdx.x].b5 ^= bb.b5 ^ (0 - ((k3456[threadIdx.x] >> 5) & 1)) ^ tw1_c[29];
-  aa[threadIdx.x].b6 ^= bb.b6 ^ (0 - ((k3456[threadIdx.x] >> 6) & 1)) ^ tw1_c[30];
-  aa[threadIdx.x].b7 ^= bb.b7 ^ (0 - ((k3456[threadIdx.x] >> 7) & 1)) ^ tw1_c[31];
+  aa[threadIdx.x].b0 ^= bb.b0 ^ (0 - ((k3456[threadIdx.x] >> 0) & 1)) ^ tw1[24];
+  aa[threadIdx.x].b1 ^= bb.b1 ^ (0 - ((k3456[threadIdx.x] >> 1) & 1)) ^ tw1[25];
+  aa[threadIdx.x].b2 ^= bb.b2 ^ (0 - ((k3456[threadIdx.x] >> 2) & 1)) ^ tw1[26];
+  aa[threadIdx.x].b3 ^= bb.b3 ^ (0 - ((k3456[threadIdx.x] >> 3) & 1)) ^ tw1[27];
+  aa[threadIdx.x].b4 ^= bb.b4 ^ (0 - ((k3456[threadIdx.x] >> 4) & 1)) ^ tw1[28];
+  aa[threadIdx.x].b5 ^= bb.b5 ^ (0 - ((k3456[threadIdx.x] >> 5) & 1)) ^ tw1[29];
+  aa[threadIdx.x].b6 ^= bb.b6 ^ (0 - ((k3456[threadIdx.x] >> 6) & 1)) ^ tw1[30];
+  aa[threadIdx.x].b7 ^= bb.b7 ^ (0 - ((k3456[threadIdx.x] >> 7) & 1)) ^ tw1[31];
   aa[threadIdx.x] = sbox(aa[threadIdx.x]);
 
-  cc.b0 ^= bb.b0 ^ 0xaaaaaaaa                     ^ tw1_c[16];
-  cc.b1 ^= bb.b1 ^ 0xcccccccc                     ^ tw1_c[17];
-  cc.b2 ^= bb.b2 ^ 0xf0f0f0f0                     ^ tw1_c[18];
-  cc.b3 ^= bb.b3 ^ 0xff00ff00                     ^ tw1_c[19];
-  cc.b4 ^= bb.b4 ^ 0xffff0000                     ^ tw1_c[20];
-  cc.b5 ^= bb.b5 ^ (0 -  (threadIdx.x       & 1)) ^ tw1_c[21];
-  cc.b6 ^= bb.b6 ^ (0 - ((threadIdx.x >> 1) & 1)) ^ tw1_c[22];
-  cc.b7 ^= bb.b7 ^ (0 - ((threadIdx.x >> 2) & 1)) ^ tw1_c[23];
+  cc.b0 ^= bb.b0 ^ 0xaaaaaaaa                     ^ tw1[16];
+  cc.b1 ^= bb.b1 ^ 0xcccccccc                     ^ tw1[17];
+  cc.b2 ^= bb.b2 ^ 0xf0f0f0f0                     ^ tw1[18];
+  cc.b3 ^= bb.b3 ^ 0xff00ff00                     ^ tw1[19];
+  cc.b4 ^= bb.b4 ^ 0xffff0000                     ^ tw1[20];
+  cc.b5 ^= bb.b5 ^ (0 -  (threadIdx.x       & 1)) ^ tw1[21];
+  cc.b6 ^= bb.b6 ^ (0 - ((threadIdx.x >> 1) & 1)) ^ tw1[22];
+  cc.b7 ^= bb.b7 ^ (0 - ((threadIdx.x >> 2) & 1)) ^ tw1[23];
   cc = sbox(cc);
 
-  bb.b0 ^= aa[threadIdx.x].b0 ^ cc.b0 ^ key_c[8]  ^ tw1_c[8];
-  bb.b1 ^= aa[threadIdx.x].b1 ^ cc.b1 ^ key_c[9]  ^ tw1_c[9];
-  bb.b2 ^= aa[threadIdx.x].b2 ^ cc.b2 ^ key_c[10] ^ tw1_c[10];
-  bb.b3 ^= aa[threadIdx.x].b3 ^ cc.b3 ^ key_c[11] ^ tw1_c[11];
-  bb.b4 ^= aa[threadIdx.x].b4 ^ cc.b4 ^ key_c[12] ^ tw1_c[12];
-  bb.b5 ^= aa[threadIdx.x].b5 ^ cc.b5 ^ key_c[13] ^ tw1_c[13];
-  bb.b6 ^= aa[threadIdx.x].b6 ^ cc.b6 ^ key_c[14] ^ tw1_c[14];
-  bb.b7 ^= aa[threadIdx.x].b7 ^ cc.b7 ^ key_c[15] ^ tw1_c[15];
+  bb.b0 ^= aa[threadIdx.x].b0 ^ cc.b0 ^ key_12[8]  ^ tw1[8];
+  bb.b1 ^= aa[threadIdx.x].b1 ^ cc.b1 ^ key_12[9]  ^ tw1[9];
+  bb.b2 ^= aa[threadIdx.x].b2 ^ cc.b2 ^ key_12[10] ^ tw1[10];
+  bb.b3 ^= aa[threadIdx.x].b3 ^ cc.b3 ^ key_12[11] ^ tw1[11];
+  bb.b4 ^= aa[threadIdx.x].b4 ^ cc.b4 ^ key_12[12] ^ tw1[12];
+  bb.b5 ^= aa[threadIdx.x].b5 ^ cc.b5 ^ key_12[13] ^ tw1[13];
+  bb.b6 ^= aa[threadIdx.x].b6 ^ cc.b6 ^ key_12[14] ^ tw1[14];
+  bb.b7 ^= aa[threadIdx.x].b7 ^ cc.b7 ^ key_12[15] ^ tw1[15];
   bb = sbox(bb);
 
   /* Round 6. */
-  aa[threadIdx.x].b0 ^= bb.b0 ^ key_c[0] ^ tw1_c[0];
-  aa[threadIdx.x].b1 ^= bb.b1 ^ key_c[1] ^ tw1_c[1];
-  aa[threadIdx.x].b2 ^= bb.b2 ^ key_c[2] ^ tw1_c[2];
-  aa[threadIdx.x].b3 ^= bb.b3 ^ key_c[3] ^ tw1_c[3];
-  aa[threadIdx.x].b4 ^= bb.b4 ^ key_c[4] ^ tw1_c[4];
-  aa[threadIdx.x].b5 ^= bb.b5 ^ key_c[5] ^ tw1_c[5];
-  aa[threadIdx.x].b6 ^= bb.b6 ^ key_c[6] ^ tw1_c[6];
-  aa[threadIdx.x].b7 ^= bb.b7 ^ key_c[7] ^ tw1_c[7];
+  aa[threadIdx.x].b0 ^= bb.b0 ^ key_12[0] ^ tw1[0];
+  aa[threadIdx.x].b1 ^= bb.b1 ^ key_12[1] ^ tw1[1];
+  aa[threadIdx.x].b2 ^= bb.b2 ^ key_12[2] ^ tw1[2];
+  aa[threadIdx.x].b3 ^= bb.b3 ^ key_12[3] ^ tw1[3];
+  aa[threadIdx.x].b4 ^= bb.b4 ^ key_12[4] ^ tw1[4];
+  aa[threadIdx.x].b5 ^= bb.b5 ^ key_12[5] ^ tw1[5];
+  aa[threadIdx.x].b6 ^= bb.b6 ^ key_12[6] ^ tw1[6];
+  aa[threadIdx.x].b7 ^= bb.b7 ^ key_12[7] ^ tw1[7];
   aa[threadIdx.x] = sbox(aa[threadIdx.x]);
 
-  cc.b0 ^= bb.b0 ^ (0 - ((k3456[threadIdx.x] >> 24) & 1)) ^ tw1_c[56];
-  cc.b1 ^= bb.b1 ^ (0 - ((k3456[threadIdx.x] >> 25) & 1)) ^ tw1_c[57];
-  cc.b2 ^= bb.b2 ^ (0 - ((k3456[threadIdx.x] >> 26) & 1)) ^ tw1_c[58];
-  cc.b3 ^= bb.b3 ^ (0 - ((k3456[threadIdx.x] >> 27) & 1)) ^ tw1_c[59];
-  cc.b4 ^= bb.b4 ^ (0 - ((k3456[threadIdx.x] >> 28) & 1)) ^ tw1_c[60];
-  cc.b5 ^= bb.b5 ^ (0 - ((k3456[threadIdx.x] >> 29) & 1)) ^ tw1_c[61];
-  cc.b6 ^= bb.b6 ^ (0 - ((k3456[threadIdx.x] >> 30) & 1)) ^ tw1_c[62];
-  cc.b7 ^= bb.b7 ^ (0 - ((k3456[threadIdx.x] >> 31) & 1)) ^ tw1_c[63];
+  cc.b0 ^= bb.b0 ^ (0 - ((k3456[threadIdx.x] >> 24) & 1)) ^ tw1[56];
+  cc.b1 ^= bb.b1 ^ (0 - ((k3456[threadIdx.x] >> 25) & 1)) ^ tw1[57];
+  cc.b2 ^= bb.b2 ^ (0 - ((k3456[threadIdx.x] >> 26) & 1)) ^ tw1[58];
+  cc.b3 ^= bb.b3 ^ (0 - ((k3456[threadIdx.x] >> 27) & 1)) ^ tw1[59];
+  cc.b4 ^= bb.b4 ^ (0 - ((k3456[threadIdx.x] >> 28) & 1)) ^ tw1[60];
+  cc.b5 ^= bb.b5 ^ (0 - ((k3456[threadIdx.x] >> 29) & 1)) ^ tw1[61];
+  cc.b6 ^= bb.b6 ^ (0 - ((k3456[threadIdx.x] >> 30) & 1)) ^ tw1[62];
+  cc.b7 ^= bb.b7 ^ (0 - ((k3456[threadIdx.x] >> 31) & 1)) ^ tw1[63];
   cc = sbox(cc);
 
-  bb.b0 ^= aa[threadIdx.x].b0 ^ cc.b0 ^ (0 - ((k3456[threadIdx.x] >> 16) & 1)) ^ tw1_c[48];
-  bb.b1 ^= aa[threadIdx.x].b1 ^ cc.b1 ^ (0 - ((k3456[threadIdx.x] >> 17) & 1)) ^ tw1_c[49];
-  bb.b2 ^= aa[threadIdx.x].b2 ^ cc.b2 ^ (0 - ((k3456[threadIdx.x] >> 18) & 1)) ^ tw1_c[50];
-  bb.b3 ^= aa[threadIdx.x].b3 ^ cc.b3 ^ (0 - ((k3456[threadIdx.x] >> 19) & 1)) ^ tw1_c[51];
-  bb.b4 ^= aa[threadIdx.x].b4 ^ cc.b4 ^ (0 - ((k3456[threadIdx.x] >> 20) & 1)) ^ tw1_c[52];
-  bb.b5 ^= aa[threadIdx.x].b5 ^ cc.b5 ^ (0 - ((k3456[threadIdx.x] >> 21) & 1)) ^ tw1_c[53];
-  bb.b6 ^= aa[threadIdx.x].b6 ^ cc.b6 ^ (0 - ((k3456[threadIdx.x] >> 22) & 1)) ^ tw1_c[54];
-  bb.b7 ^= aa[threadIdx.x].b7 ^ cc.b7 ^ (0 - ((k3456[threadIdx.x] >> 23) & 1)) ^ tw1_c[55];
+  bb.b0 ^= aa[threadIdx.x].b0 ^ cc.b0 ^ (0 - ((k3456[threadIdx.x] >> 16) & 1)) ^ tw1[48];
+  bb.b1 ^= aa[threadIdx.x].b1 ^ cc.b1 ^ (0 - ((k3456[threadIdx.x] >> 17) & 1)) ^ tw1[49];
+  bb.b2 ^= aa[threadIdx.x].b2 ^ cc.b2 ^ (0 - ((k3456[threadIdx.x] >> 18) & 1)) ^ tw1[50];
+  bb.b3 ^= aa[threadIdx.x].b3 ^ cc.b3 ^ (0 - ((k3456[threadIdx.x] >> 19) & 1)) ^ tw1[51];
+  bb.b4 ^= aa[threadIdx.x].b4 ^ cc.b4 ^ (0 - ((k3456[threadIdx.x] >> 20) & 1)) ^ tw1[52];
+  bb.b5 ^= aa[threadIdx.x].b5 ^ cc.b5 ^ (0 - ((k3456[threadIdx.x] >> 21) & 1)) ^ tw1[53];
+  bb.b6 ^= aa[threadIdx.x].b6 ^ cc.b6 ^ (0 - ((k3456[threadIdx.x] >> 22) & 1)) ^ tw1[54];
+  bb.b7 ^= aa[threadIdx.x].b7 ^ cc.b7 ^ (0 - ((k3456[threadIdx.x] >> 23) & 1)) ^ tw1[55];
   bb = sbox(bb);
 
   /* Round 7. */
   if (rounds > 6) {
-    aa[threadIdx.x].b0 ^= bb.b0 ^ (0 - ((k3456[threadIdx.x] >> 8) & 1))  ^ tw1_c[40];
-    aa[threadIdx.x].b1 ^= bb.b1 ^ (0 - ((k3456[threadIdx.x] >> 9) & 1))  ^ tw1_c[41];
-    aa[threadIdx.x].b2 ^= bb.b2 ^ (0 - ((k3456[threadIdx.x] >> 10) & 1)) ^ tw1_c[42];
-    aa[threadIdx.x].b3 ^= bb.b3 ^ (0 - ((k3456[threadIdx.x] >> 11) & 1)) ^ tw1_c[43];
-    aa[threadIdx.x].b4 ^= bb.b4 ^ (0 - ((k3456[threadIdx.x] >> 12) & 1)) ^ tw1_c[44];
-    aa[threadIdx.x].b5 ^= bb.b5 ^ (0 - ((k3456[threadIdx.x] >> 13) & 1)) ^ tw1_c[45];
-    aa[threadIdx.x].b6 ^= bb.b6 ^ (0 - ((k3456[threadIdx.x] >> 14) & 1)) ^ tw1_c[46];
-    aa[threadIdx.x].b7 ^= bb.b7 ^ (0 - ((k3456[threadIdx.x] >> 15) & 1)) ^ tw1_c[47];
+    aa[threadIdx.x].b0 ^= bb.b0 ^ (0 - ((k3456[threadIdx.x] >> 8) & 1))  ^ tw1[40];
+    aa[threadIdx.x].b1 ^= bb.b1 ^ (0 - ((k3456[threadIdx.x] >> 9) & 1))  ^ tw1[41];
+    aa[threadIdx.x].b2 ^= bb.b2 ^ (0 - ((k3456[threadIdx.x] >> 10) & 1)) ^ tw1[42];
+    aa[threadIdx.x].b3 ^= bb.b3 ^ (0 - ((k3456[threadIdx.x] >> 11) & 1)) ^ tw1[43];
+    aa[threadIdx.x].b4 ^= bb.b4 ^ (0 - ((k3456[threadIdx.x] >> 12) & 1)) ^ tw1[44];
+    aa[threadIdx.x].b5 ^= bb.b5 ^ (0 - ((k3456[threadIdx.x] >> 13) & 1)) ^ tw1[45];
+    aa[threadIdx.x].b6 ^= bb.b6 ^ (0 - ((k3456[threadIdx.x] >> 14) & 1)) ^ tw1[46];
+    aa[threadIdx.x].b7 ^= bb.b7 ^ (0 - ((k3456[threadIdx.x] >> 15) & 1)) ^ tw1[47];
     aa[threadIdx.x] = sbox(aa[threadIdx.x]);
 
-    cc.b0 ^= bb.b0 ^ (0 - ((k3456[threadIdx.x] >> 0) & 1)) ^ tw1_c[32];
-    cc.b1 ^= bb.b1 ^ (0 - ((k3456[threadIdx.x] >> 1) & 1)) ^ tw1_c[33];
-    cc.b2 ^= bb.b2 ^ (0 - ((k3456[threadIdx.x] >> 2) & 1)) ^ tw1_c[34];
-    cc.b3 ^= bb.b3 ^ (0 - ((k3456[threadIdx.x] >> 3) & 1)) ^ tw1_c[35];
-    cc.b4 ^= bb.b4 ^ (0 - ((k3456[threadIdx.x] >> 4) & 1)) ^ tw1_c[36];
-    cc.b5 ^= bb.b5 ^ (0 - ((k3456[threadIdx.x] >> 5) & 1)) ^ tw1_c[37];
-    cc.b6 ^= bb.b6 ^ (0 - ((k3456[threadIdx.x] >> 6) & 1)) ^ tw1_c[38];
-    cc.b7 ^= bb.b7 ^ (0 - ((k3456[threadIdx.x] >> 7) & 1)) ^ tw1_c[39];
+    cc.b0 ^= bb.b0 ^ (0 - ((k3456[threadIdx.x] >> 0) & 1)) ^ tw1[32];
+    cc.b1 ^= bb.b1 ^ (0 - ((k3456[threadIdx.x] >> 1) & 1)) ^ tw1[33];
+    cc.b2 ^= bb.b2 ^ (0 - ((k3456[threadIdx.x] >> 2) & 1)) ^ tw1[34];
+    cc.b3 ^= bb.b3 ^ (0 - ((k3456[threadIdx.x] >> 3) & 1)) ^ tw1[35];
+    cc.b4 ^= bb.b4 ^ (0 - ((k3456[threadIdx.x] >> 4) & 1)) ^ tw1[36];
+    cc.b5 ^= bb.b5 ^ (0 - ((k3456[threadIdx.x] >> 5) & 1)) ^ tw1[37];
+    cc.b6 ^= bb.b6 ^ (0 - ((k3456[threadIdx.x] >> 6) & 1)) ^ tw1[38];
+    cc.b7 ^= bb.b7 ^ (0 - ((k3456[threadIdx.x] >> 7) & 1)) ^ tw1[39];
     cc = sbox(cc);
 
-    bb.b0 ^= aa[threadIdx.x].b0 ^ cc.b0 ^ 0xaaaaaaaa                     ^ tw1_c[24];
-    bb.b1 ^= aa[threadIdx.x].b1 ^ cc.b1 ^ 0xcccccccc                     ^ tw1_c[25];
-    bb.b2 ^= aa[threadIdx.x].b2 ^ cc.b2 ^ 0xf0f0f0f0                     ^ tw1_c[26];
-    bb.b3 ^= aa[threadIdx.x].b3 ^ cc.b3 ^ 0xff00ff00                     ^ tw1_c[27];
-    bb.b4 ^= aa[threadIdx.x].b4 ^ cc.b4 ^ 0xffff0000                     ^ tw1_c[28];
-    bb.b5 ^= aa[threadIdx.x].b5 ^ cc.b5 ^ (0 -  (threadIdx.x       & 1)) ^ tw1_c[29];
-    bb.b6 ^= aa[threadIdx.x].b6 ^ cc.b6 ^ (0 - ((threadIdx.x >> 1) & 1)) ^ tw1_c[30];
-    bb.b7 ^= aa[threadIdx.x].b7 ^ cc.b7 ^ (0 - ((threadIdx.x >> 2) & 1)) ^ tw1_c[31];
+    bb.b0 ^= aa[threadIdx.x].b0 ^ cc.b0 ^ 0xaaaaaaaa                     ^ tw1[24];
+    bb.b1 ^= aa[threadIdx.x].b1 ^ cc.b1 ^ 0xcccccccc                     ^ tw1[25];
+    bb.b2 ^= aa[threadIdx.x].b2 ^ cc.b2 ^ 0xf0f0f0f0                     ^ tw1[26];
+    bb.b3 ^= aa[threadIdx.x].b3 ^ cc.b3 ^ 0xff00ff00                     ^ tw1[27];
+    bb.b4 ^= aa[threadIdx.x].b4 ^ cc.b4 ^ 0xffff0000                     ^ tw1[28];
+    bb.b5 ^= aa[threadIdx.x].b5 ^ cc.b5 ^ (0 -  (threadIdx.x       & 1)) ^ tw1[29];
+    bb.b6 ^= aa[threadIdx.x].b6 ^ cc.b6 ^ (0 - ((threadIdx.x >> 1) & 1)) ^ tw1[30];
+    bb.b7 ^= aa[threadIdx.x].b7 ^ cc.b7 ^ (0 - ((threadIdx.x >> 2) & 1)) ^ tw1[31];
     bb = sbox(bb);
   }
 
   /* Round 8. */
   if (rounds > 7) {
-    aa[threadIdx.x].b0 ^= bb.b0 ^ key_c[8]  ^ tw1_c[16];
-    aa[threadIdx.x].b1 ^= bb.b1 ^ key_c[9]  ^ tw1_c[17];
-    aa[threadIdx.x].b2 ^= bb.b2 ^ key_c[10] ^ tw1_c[18];
-    aa[threadIdx.x].b3 ^= bb.b3 ^ key_c[11] ^ tw1_c[19];
-    aa[threadIdx.x].b4 ^= bb.b4 ^ key_c[12] ^ tw1_c[20];
-    aa[threadIdx.x].b5 ^= bb.b5 ^ key_c[13] ^ tw1_c[21];
-    aa[threadIdx.x].b6 ^= bb.b6 ^ key_c[14] ^ tw1_c[22];
-    aa[threadIdx.x].b7 ^= bb.b7 ^ key_c[15] ^ tw1_c[23];
+    aa[threadIdx.x].b0 ^= bb.b0 ^ key_12[8]  ^ tw1[16];
+    aa[threadIdx.x].b1 ^= bb.b1 ^ key_12[9]  ^ tw1[17];
+    aa[threadIdx.x].b2 ^= bb.b2 ^ key_12[10] ^ tw1[18];
+    aa[threadIdx.x].b3 ^= bb.b3 ^ key_12[11] ^ tw1[19];
+    aa[threadIdx.x].b4 ^= bb.b4 ^ key_12[12] ^ tw1[20];
+    aa[threadIdx.x].b5 ^= bb.b5 ^ key_12[13] ^ tw1[21];
+    aa[threadIdx.x].b6 ^= bb.b6 ^ key_12[14] ^ tw1[22];
+    aa[threadIdx.x].b7 ^= bb.b7 ^ key_12[15] ^ tw1[23];
     aa[threadIdx.x] = sbox(aa[threadIdx.x]);
 
-    cc.b0 ^= bb.b0 ^ key_c[0] ^ tw1_c[8];
-    cc.b1 ^= bb.b1 ^ key_c[1] ^ tw1_c[9];
-    cc.b2 ^= bb.b2 ^ key_c[2] ^ tw1_c[10];
-    cc.b3 ^= bb.b3 ^ key_c[3] ^ tw1_c[11];
-    cc.b4 ^= bb.b4 ^ key_c[4] ^ tw1_c[12];
-    cc.b5 ^= bb.b5 ^ key_c[5] ^ tw1_c[13];
-    cc.b6 ^= bb.b6 ^ key_c[6] ^ tw1_c[14];
-    cc.b7 ^= bb.b7 ^ key_c[7] ^ tw1_c[15];
+    cc.b0 ^= bb.b0 ^ key_12[0] ^ tw1[8];
+    cc.b1 ^= bb.b1 ^ key_12[1] ^ tw1[9];
+    cc.b2 ^= bb.b2 ^ key_12[2] ^ tw1[10];
+    cc.b3 ^= bb.b3 ^ key_12[3] ^ tw1[11];
+    cc.b4 ^= bb.b4 ^ key_12[4] ^ tw1[12];
+    cc.b5 ^= bb.b5 ^ key_12[5] ^ tw1[13];
+    cc.b6 ^= bb.b6 ^ key_12[6] ^ tw1[14];
+    cc.b7 ^= bb.b7 ^ key_12[7] ^ tw1[15];
     cc = sbox(cc);
 
-    bb.b0 ^= aa[threadIdx.x].b0 ^ cc.b0 ^ (0 - ((k3456[threadIdx.x] >> 24) & 1)) ^ tw1_c[0];
-    bb.b1 ^= aa[threadIdx.x].b1 ^ cc.b1 ^ (0 - ((k3456[threadIdx.x] >> 25) & 1)) ^ tw1_c[1];
-    bb.b2 ^= aa[threadIdx.x].b2 ^ cc.b2 ^ (0 - ((k3456[threadIdx.x] >> 26) & 1)) ^ tw1_c[2];
-    bb.b3 ^= aa[threadIdx.x].b3 ^ cc.b3 ^ (0 - ((k3456[threadIdx.x] >> 27) & 1)) ^ tw1_c[3];
-    bb.b4 ^= aa[threadIdx.x].b4 ^ cc.b4 ^ (0 - ((k3456[threadIdx.x] >> 28) & 1)) ^ tw1_c[4];
-    bb.b5 ^= aa[threadIdx.x].b5 ^ cc.b5 ^ (0 - ((k3456[threadIdx.x] >> 29) & 1)) ^ tw1_c[5];
-    bb.b6 ^= aa[threadIdx.x].b6 ^ cc.b6 ^ (0 - ((k3456[threadIdx.x] >> 30) & 1)) ^ tw1_c[6];
-    bb.b7 ^= aa[threadIdx.x].b7 ^ cc.b7 ^ (0 - ((k3456[threadIdx.x] >> 31) & 1)) ^ tw1_c[7];
+    bb.b0 ^= aa[threadIdx.x].b0 ^ cc.b0 ^ (0 - ((k3456[threadIdx.x] >> 24) & 1)) ^ tw1[0];
+    bb.b1 ^= aa[threadIdx.x].b1 ^ cc.b1 ^ (0 - ((k3456[threadIdx.x] >> 25) & 1)) ^ tw1[1];
+    bb.b2 ^= aa[threadIdx.x].b2 ^ cc.b2 ^ (0 - ((k3456[threadIdx.x] >> 26) & 1)) ^ tw1[2];
+    bb.b3 ^= aa[threadIdx.x].b3 ^ cc.b3 ^ (0 - ((k3456[threadIdx.x] >> 27) & 1)) ^ tw1[3];
+    bb.b4 ^= aa[threadIdx.x].b4 ^ cc.b4 ^ (0 - ((k3456[threadIdx.x] >> 28) & 1)) ^ tw1[4];
+    bb.b5 ^= aa[threadIdx.x].b5 ^ cc.b5 ^ (0 - ((k3456[threadIdx.x] >> 29) & 1)) ^ tw1[5];
+    bb.b6 ^= aa[threadIdx.x].b6 ^ cc.b6 ^ (0 - ((k3456[threadIdx.x] >> 30) & 1)) ^ tw1[6];
+    bb.b7 ^= aa[threadIdx.x].b7 ^ cc.b7 ^ (0 - ((k3456[threadIdx.x] >> 31) & 1)) ^ tw1[7];
     bb = sbox(bb);
   }
 
   int cmp;
-  cmp  = cc.b0 ^ ct1_c[0];
-  cmp |= cc.b1 ^ ct1_c[1];
-  cmp |= cc.b2 ^ ct1_c[2];
-  cmp |= cc.b3 ^ ct1_c[3];
-  cmp |= cc.b4 ^ ct1_c[4];
-  cmp |= cc.b5 ^ ct1_c[5];
-  cmp |= cc.b6 ^ ct1_c[6];
-  cmp |= cc.b7 ^ ct1_c[7];
-  cmp |= bb.b0 ^ ct1_c[8];
-  cmp |= bb.b1 ^ ct1_c[9];
-  cmp |= bb.b2 ^ ct1_c[10];
-  cmp |= bb.b3 ^ ct1_c[11];
-  cmp |= bb.b4 ^ ct1_c[12];
-  cmp |= bb.b5 ^ ct1_c[13];
-  cmp |= bb.b6 ^ ct1_c[14];
-  cmp |= bb.b7 ^ ct1_c[15];
-  cmp |= aa[threadIdx.x].b0 ^ ct1_c[16];
-  cmp |= aa[threadIdx.x].b1 ^ ct1_c[17];
-  cmp |= aa[threadIdx.x].b2 ^ ct1_c[18];
-  cmp |= aa[threadIdx.x].b3 ^ ct1_c[19];
-  cmp |= aa[threadIdx.x].b4 ^ ct1_c[20];
-  cmp |= aa[threadIdx.x].b5 ^ ct1_c[21];
-  cmp |= aa[threadIdx.x].b6 ^ ct1_c[22];
-  cmp |= aa[threadIdx.x].b7 ^ ct1_c[23];
+  cmp  = cc.b0 ^ ct1[0];
+  cmp |= cc.b1 ^ ct1[1];
+  cmp |= cc.b2 ^ ct1[2];
+  cmp |= cc.b3 ^ ct1[3];
+  cmp |= cc.b4 ^ ct1[4];
+  cmp |= cc.b5 ^ ct1[5];
+  cmp |= cc.b6 ^ ct1[6];
+  cmp |= cc.b7 ^ ct1[7];
+  cmp |= bb.b0 ^ ct1[8];
+  cmp |= bb.b1 ^ ct1[9];
+  cmp |= bb.b2 ^ ct1[10];
+  cmp |= bb.b3 ^ ct1[11];
+  cmp |= bb.b4 ^ ct1[12];
+  cmp |= bb.b5 ^ ct1[13];
+  cmp |= bb.b6 ^ ct1[14];
+  cmp |= bb.b7 ^ ct1[15];
+  cmp |= aa[threadIdx.x].b0 ^ ct1[16];
+  cmp |= aa[threadIdx.x].b1 ^ ct1[17];
+  cmp |= aa[threadIdx.x].b2 ^ ct1[18];
+  cmp |= aa[threadIdx.x].b3 ^ ct1[19];
+  cmp |= aa[threadIdx.x].b4 ^ ct1[20];
+  cmp |= aa[threadIdx.x].b5 ^ ct1[21];
+  cmp |= aa[threadIdx.x].b6 ^ ct1[22];
+  cmp |= aa[threadIdx.x].b7 ^ ct1[23];
   cmp = ~cmp;
-
-  if (cmp != 0) {
-    int resultp = atomicAdd(out, __popc(cmp)) * 2 + 1;
-    while (cmp != 0) {
-      int low5 = __ffs(cmp) - 1;
-      cmp ^= 1 << low5;
-      out[resultp] = k3456[threadIdx.x];
-      out[resultp + 1] = ((threadIdx.x & 7) << 5) | low5;
-      resultp += 2;
-    }
-  }
 
   found[threadIdx.x] = 0;
 
   __syncthreads();
 
+  /* Put matches in shared memory. */
   if (cmp != 0) {
-    int resultp = atomicAdd_block(found, __popc(cmp)) * 2 + 1;
+    int resultp = atomicAdd_block(found, __popc(cmp)) * 2 + 2;
     while (cmp != 0) {
       int low5 = __ffs(cmp) - 1;
       cmp ^= 1 << low5;
@@ -1254,195 +1164,220 @@ __global__ void test_candidates(int *in, int *out, int num_candidates) {
     return;
   }
 
+  /* Get global memory offset for matches found in block. */
   if (threadIdx.x == 0) {
     found[1] = atomicAdd(out, found[0]) * 2 + 1;
   }
 
   __syncthreads();
 
-  if (threadIdx.x < (found[0] * 2)) {
+  /* Copy matches to global memory. */
+  if (threadIdx.x < (found[1] * 2)) {
     int ptr = found[1] + threadIdx.x;
     out[ptr] = found[threadIdx.x + 2];
   }
 }
 
 __launch_bounds__(1024, 1)
-__global__ void upper_678(int *ret) {
+__global__ void find_candidates(int *ret, int offset) {
 
-  __shared__ int found[500];
+  volatile __shared__ int pt1[24];
+  volatile __shared__ int pt2[24];
+  volatile __shared__ int tw1[64];
+  volatile __shared__ int tw2[64];
+  volatile __shared__ int key_12[16];
+  volatile __shared__ int key_3[256];
+  __shared__ int found[1024];
+
+  if (threadIdx.x < 16) {
+    key_12[threadIdx.x] = key_c[threadIdx.x + offset * 16];
+  }
+  if (threadIdx.x < 24) {
+    pt1[threadIdx.x] = pt1_c[threadIdx.x + offset * 24];
+    pt2[threadIdx.x] = pt2_c[threadIdx.x + offset * 24];
+  }
+  if (threadIdx.x < 64) {
+    tw1[threadIdx.x] = tw1_c[threadIdx.x + offset * 64];
+    tw2[threadIdx.x] = tw2_c[threadIdx.x + offset * 64];
+  }
+  if (threadIdx.x < 256) {
+    key_3[threadIdx.x] = key3_c[threadIdx.x + offset * 256];
+  }
+
+  __syncthreads();
 
   eightbits aa, bb, cc;
 
   /* PT1: Round 1. */
-  bb.b0 = pt1_c[8];
-  bb.b1 = pt1_c[9];
-  bb.b2 = pt1_c[10];
-  bb.b3 = pt1_c[11];
-  bb.b4 = pt1_c[12];
-  bb.b5 = pt1_c[13];
-  bb.b6 = pt1_c[14];
-  bb.b7 = pt1_c[15];
-  aa.b0 = pt1_c[16] ^ bb.b0 ^ key_c[8]  ^ tw1_c[56];
-  aa.b1 = pt1_c[17] ^ bb.b1 ^ key_c[9]  ^ tw1_c[57];
-  aa.b2 = pt1_c[18] ^ bb.b2 ^ key_c[10] ^ tw1_c[58];
-  aa.b3 = pt1_c[19] ^ bb.b3 ^ key_c[11] ^ tw1_c[59];
-  aa.b4 = pt1_c[20] ^ bb.b4 ^ key_c[12] ^ tw1_c[60];
-  aa.b5 = pt1_c[21] ^ bb.b5 ^ key_c[13] ^ tw1_c[61];
-  aa.b6 = pt1_c[22] ^ bb.b6 ^ key_c[14] ^ tw1_c[62];
-  aa.b7 = pt1_c[23] ^ bb.b7 ^ key_c[15] ^ tw1_c[63];
+  bb.b0 = pt1[8];
+  bb.b1 = pt1[9];
+  bb.b2 = pt1[10];
+  bb.b3 = pt1[11];
+  bb.b4 = pt1[12];
+  bb.b5 = pt1[13];
+  bb.b6 = pt1[14];
+  bb.b7 = pt1[15];
+  aa.b0 = pt1[16] ^ bb.b0 ^ key_12[8]  ^ tw1[56];
+  aa.b1 = pt1[17] ^ bb.b1 ^ key_12[9]  ^ tw1[57];
+  aa.b2 = pt1[18] ^ bb.b2 ^ key_12[10] ^ tw1[58];
+  aa.b3 = pt1[19] ^ bb.b3 ^ key_12[11] ^ tw1[59];
+  aa.b4 = pt1[20] ^ bb.b4 ^ key_12[12] ^ tw1[60];
+  aa.b5 = pt1[21] ^ bb.b5 ^ key_12[13] ^ tw1[61];
+  aa.b6 = pt1[22] ^ bb.b6 ^ key_12[14] ^ tw1[62];
+  aa.b7 = pt1[23] ^ bb.b7 ^ key_12[15] ^ tw1[63];
   aa = sbox(aa);
 
-  cc.b0 = pt1_c[0]  ^ bb.b0 ^ key_c[0] ^ tw1_c[48];
-  cc.b1 = pt1_c[1]  ^ bb.b1 ^ key_c[1] ^ tw1_c[49];
-  cc.b2 = pt1_c[2]  ^ bb.b2 ^ key_c[2] ^ tw1_c[50];
-  cc.b3 = pt1_c[3]  ^ bb.b3 ^ key_c[3] ^ tw1_c[51];
-  cc.b4 = pt1_c[4]  ^ bb.b4 ^ key_c[4] ^ tw1_c[52];
-  cc.b5 = pt1_c[5]  ^ bb.b5 ^ key_c[5] ^ tw1_c[53];
-  cc.b6 = pt1_c[6]  ^ bb.b6 ^ key_c[6] ^ tw1_c[54];
-  cc.b7 = pt1_c[7]  ^ bb.b7 ^ key_c[7] ^ tw1_c[55];
+  cc.b0 = pt1[0]  ^ bb.b0 ^ key_12[0] ^ tw1[48];
+  cc.b1 = pt1[1]  ^ bb.b1 ^ key_12[1] ^ tw1[49];
+  cc.b2 = pt1[2]  ^ bb.b2 ^ key_12[2] ^ tw1[50];
+  cc.b3 = pt1[3]  ^ bb.b3 ^ key_12[3] ^ tw1[51];
+  cc.b4 = pt1[4]  ^ bb.b4 ^ key_12[4] ^ tw1[52];
+  cc.b5 = pt1[5]  ^ bb.b5 ^ key_12[5] ^ tw1[53];
+  cc.b6 = pt1[6]  ^ bb.b6 ^ key_12[6] ^ tw1[54];
+  cc.b7 = pt1[7]  ^ bb.b7 ^ key_12[7] ^ tw1[55];
   cc = sbox(cc);
 
-  bb.b0 ^= aa.b0  ^ cc.b0 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 0) & 1)) ^ tw1_c[40];
-  bb.b1 ^= aa.b1  ^ cc.b1 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 1) & 1)) ^ tw1_c[41];
-  bb.b2 ^= aa.b2  ^ cc.b2 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 2) & 1)) ^ tw1_c[42];
-  bb.b3 ^= aa.b3  ^ cc.b3 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 3) & 1)) ^ tw1_c[43];
-  bb.b4 ^= aa.b4  ^ cc.b4 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 4) & 1)) ^ tw1_c[44];
-  bb.b5 ^= aa.b5  ^ cc.b5 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 5) & 1)) ^ tw1_c[45];
-  bb.b6 ^= aa.b6  ^ cc.b6 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 6) & 1)) ^ tw1_c[46];
-  bb.b7 ^= aa.b7  ^ cc.b7 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 7) & 1)) ^ tw1_c[47];
+  bb.b0 ^= aa.b0  ^ cc.b0 ^ (0 - ((key_3[blockIdx.x >> 9] >> 0) & 1)) ^ tw1[40];
+  bb.b1 ^= aa.b1  ^ cc.b1 ^ (0 - ((key_3[blockIdx.x >> 9] >> 1) & 1)) ^ tw1[41];
+  bb.b2 ^= aa.b2  ^ cc.b2 ^ (0 - ((key_3[blockIdx.x >> 9] >> 2) & 1)) ^ tw1[42];
+  bb.b3 ^= aa.b3  ^ cc.b3 ^ (0 - ((key_3[blockIdx.x >> 9] >> 3) & 1)) ^ tw1[43];
+  bb.b4 ^= aa.b4  ^ cc.b4 ^ (0 - ((key_3[blockIdx.x >> 9] >> 4) & 1)) ^ tw1[44];
+  bb.b5 ^= aa.b5  ^ cc.b5 ^ (0 - ((key_3[blockIdx.x >> 9] >> 5) & 1)) ^ tw1[45];
+  bb.b6 ^= aa.b6  ^ cc.b6 ^ (0 - ((key_3[blockIdx.x >> 9] >> 6) & 1)) ^ tw1[46];
+  bb.b7 ^= aa.b7  ^ cc.b7 ^ (0 - ((key_3[blockIdx.x >> 9] >> 7) & 1)) ^ tw1[47];
   bb = sbox(bb);
 
   /* PT1: Round 2. */
-  aa.b0 ^= bb.b0 ^ (0 - ((blockIdx.x  >> 1) & 1)) ^ tw1_c[32];
-  aa.b1 ^= bb.b1 ^ (0 - ((blockIdx.x  >> 2) & 1)) ^ tw1_c[33];
-  aa.b2 ^= bb.b2 ^ (0 - ((blockIdx.x  >> 3) & 1)) ^ tw1_c[34];
-  aa.b3 ^= bb.b3 ^ (0 - ((blockIdx.x  >> 4) & 1)) ^ tw1_c[35];
-  aa.b4 ^= bb.b4 ^ (0 - ((blockIdx.x  >> 5) & 1)) ^ tw1_c[36];
-  aa.b5 ^= bb.b5 ^ (0 - ((blockIdx.x  >> 6) & 1)) ^ tw1_c[37];
-  aa.b6 ^= bb.b6 ^ (0 - ((blockIdx.x  >> 7) & 1)) ^ tw1_c[38];
-  aa.b7 ^= bb.b7 ^ (0 - ((blockIdx.x  >> 8) & 1)) ^ tw1_c[39];
+  aa.b0 ^= bb.b0 ^ (0 - ((blockIdx.x  >> 1) & 1)) ^ tw1[32];
+  aa.b1 ^= bb.b1 ^ (0 - ((blockIdx.x  >> 2) & 1)) ^ tw1[33];
+  aa.b2 ^= bb.b2 ^ (0 - ((blockIdx.x  >> 3) & 1)) ^ tw1[34];
+  aa.b3 ^= bb.b3 ^ (0 - ((blockIdx.x  >> 4) & 1)) ^ tw1[35];
+  aa.b4 ^= bb.b4 ^ (0 - ((blockIdx.x  >> 5) & 1)) ^ tw1[36];
+  aa.b5 ^= bb.b5 ^ (0 - ((blockIdx.x  >> 6) & 1)) ^ tw1[37];
+  aa.b6 ^= bb.b6 ^ (0 - ((blockIdx.x  >> 7) & 1)) ^ tw1[38];
+  aa.b7 ^= bb.b7 ^ (0 - ((blockIdx.x  >> 8) & 1)) ^ tw1[39];
   aa = sbox(aa);
 
-  cc.b0 ^= bb.b0 ^ (0 - ((threadIdx.x >> 3) & 1)) ^ tw1_c[24];
-  cc.b1 ^= bb.b1 ^ (0 - ((threadIdx.x >> 4) & 1)) ^ tw1_c[25];
-  cc.b2 ^= bb.b2 ^ (0 - ((threadIdx.x >> 5) & 1)) ^ tw1_c[26];
-  cc.b3 ^= bb.b3 ^ (0 - ((threadIdx.x >> 6) & 1)) ^ tw1_c[27];
-  cc.b4 ^= bb.b4 ^ (0 - ((threadIdx.x >> 7) & 1)) ^ tw1_c[28];
-  cc.b5 ^= bb.b5 ^ (0 - ((threadIdx.x >> 8) & 1)) ^ tw1_c[29];
-  cc.b6 ^= bb.b6 ^ (0 - ((threadIdx.x >> 9) & 1)) ^ tw1_c[30];
-  cc.b7 ^= bb.b7 ^ (0 -  (blockIdx.x        & 1)) ^ tw1_c[31];
+  cc.b0 ^= bb.b0 ^ (0 - ((threadIdx.x >> 3) & 1)) ^ tw1[24];
+  cc.b1 ^= bb.b1 ^ (0 - ((threadIdx.x >> 4) & 1)) ^ tw1[25];
+  cc.b2 ^= bb.b2 ^ (0 - ((threadIdx.x >> 5) & 1)) ^ tw1[26];
+  cc.b3 ^= bb.b3 ^ (0 - ((threadIdx.x >> 6) & 1)) ^ tw1[27];
+  cc.b4 ^= bb.b4 ^ (0 - ((threadIdx.x >> 7) & 1)) ^ tw1[28];
+  cc.b5 ^= bb.b5 ^ (0 - ((threadIdx.x >> 8) & 1)) ^ tw1[29];
+  cc.b6 ^= bb.b6 ^ (0 - ((threadIdx.x >> 9) & 1)) ^ tw1[30];
+  cc.b7 ^= bb.b7 ^ (0 -  (blockIdx.x        & 1)) ^ tw1[31];
   cc = sbox(cc);
 
-  bb.b0 ^= aa.b0 ^ cc.b0 ^ 0xaaaaaaaa                     ^ tw1_c[16];
-  bb.b1 ^= aa.b1 ^ cc.b1 ^ 0xcccccccc                     ^ tw1_c[17];
-  bb.b2 ^= aa.b2 ^ cc.b2 ^ 0xf0f0f0f0                     ^ tw1_c[18];
-  bb.b3 ^= aa.b3 ^ cc.b3 ^ 0xff00ff00                     ^ tw1_c[19];
-  bb.b4 ^= aa.b4 ^ cc.b4 ^ 0xffff0000                     ^ tw1_c[20];
-  bb.b5 ^= aa.b5 ^ cc.b5 ^ (0 - ((threadIdx.x >> 0) & 1)) ^ tw1_c[21];
-  bb.b6 ^= aa.b6 ^ cc.b6 ^ (0 - ((threadIdx.x >> 1) & 1)) ^ tw1_c[22];
-  bb.b7 ^= aa.b7 ^ cc.b7 ^ (0 - ((threadIdx.x >> 2) & 1)) ^ tw1_c[23];
+  bb.b0 ^= aa.b0 ^ cc.b0 ^ 0xaaaaaaaa                     ^ tw1[16];
+  bb.b1 ^= aa.b1 ^ cc.b1 ^ 0xcccccccc                     ^ tw1[17];
+  bb.b2 ^= aa.b2 ^ cc.b2 ^ 0xf0f0f0f0                     ^ tw1[18];
+  bb.b3 ^= aa.b3 ^ cc.b3 ^ 0xff00ff00                     ^ tw1[19];
+  bb.b4 ^= aa.b4 ^ cc.b4 ^ 0xffff0000                     ^ tw1[20];
+  bb.b5 ^= aa.b5 ^ cc.b5 ^ (0 - ((threadIdx.x >> 0) & 1)) ^ tw1[21];
+  bb.b6 ^= aa.b6 ^ cc.b6 ^ (0 - ((threadIdx.x >> 1) & 1)) ^ tw1[22];
+  bb.b7 ^= aa.b7 ^ cc.b7 ^ (0 - ((threadIdx.x >> 2) & 1)) ^ tw1[23];
   bb = sbox(bb);
 
   /* PT1: Round 3c. */
-  cc.b0 ^= bb.b0 ^ key_c[8]  ^ tw1_c[0];
-  cc.b1 ^= bb.b1 ^ key_c[9]  ^ tw1_c[1];
-  cc.b2 ^= bb.b2 ^ key_c[10] ^ tw1_c[2];
-  cc.b3 ^= bb.b3 ^ key_c[11] ^ tw1_c[3];
-  cc.b4 ^= bb.b4 ^ key_c[12] ^ tw1_c[4];
-  cc.b5 ^= bb.b5 ^ key_c[13] ^ tw1_c[5];
-  cc.b6 ^= bb.b6 ^ key_c[14] ^ tw1_c[6];
-  cc.b7 ^= bb.b7 ^ key_c[15] ^ tw1_c[7];
+  cc.b0 ^= bb.b0 ^ key_12[8]  ^ tw1[0];
+  cc.b1 ^= bb.b1 ^ key_12[9]  ^ tw1[1];
+  cc.b2 ^= bb.b2 ^ key_12[10] ^ tw1[2];
+  cc.b3 ^= bb.b3 ^ key_12[11] ^ tw1[3];
+  cc.b4 ^= bb.b4 ^ key_12[12] ^ tw1[4];
+  cc.b5 ^= bb.b5 ^ key_12[13] ^ tw1[5];
+  cc.b6 ^= bb.b6 ^ key_12[14] ^ tw1[6];
+  cc.b7 ^= bb.b7 ^ key_12[15] ^ tw1[7];
   cc = sbox(cc);
 
   eightbits xx;
-  xx.b0 = cc.b0 ^ tw1_c[24] ^ tw2_c[24];
-  xx.b1 = cc.b1 ^ tw1_c[25] ^ tw2_c[25];
-  xx.b2 = cc.b2 ^ tw1_c[26] ^ tw2_c[26];
-  xx.b3 = cc.b3 ^ tw1_c[27] ^ tw2_c[27];
-  xx.b4 = cc.b4 ^ tw1_c[28] ^ tw2_c[28];
-  xx.b5 = cc.b5 ^ tw1_c[29] ^ tw2_c[29];
-  xx.b6 = cc.b6 ^ tw1_c[30] ^ tw2_c[30];
-  xx.b7 = cc.b7 ^ tw1_c[31] ^ tw2_c[31];
+  xx.b0 = cc.b0 ^ tw1[24] ^ tw2[24];
+  xx.b1 = cc.b1 ^ tw1[25] ^ tw2[25];
+  xx.b2 = cc.b2 ^ tw1[26] ^ tw2[26];
+  xx.b3 = cc.b3 ^ tw1[27] ^ tw2[27];
+  xx.b4 = cc.b4 ^ tw1[28] ^ tw2[28];
+  xx.b5 = cc.b5 ^ tw1[29] ^ tw2[29];
+  xx.b6 = cc.b6 ^ tw1[30] ^ tw2[30];
+  xx.b7 = cc.b7 ^ tw1[31] ^ tw2[31];
 
   /* PT2: Round 1. */
-  bb.b0 = pt2_c[8];
-  bb.b1 = pt2_c[9];
-  bb.b2 = pt2_c[10];
-  bb.b3 = pt2_c[11];
-  bb.b4 = pt2_c[12];
-  bb.b5 = pt2_c[13];
-  bb.b6 = pt2_c[14];
-  bb.b7 = pt2_c[15];
-  aa.b0 = pt2_c[16] ^ bb.b0 ^ key_c[8]  ^ tw2_c[56];
-  aa.b1 = pt2_c[17] ^ bb.b1 ^ key_c[9]  ^ tw2_c[57];
-  aa.b2 = pt2_c[18] ^ bb.b2 ^ key_c[10] ^ tw2_c[58];
-  aa.b3 = pt2_c[19] ^ bb.b3 ^ key_c[11] ^ tw2_c[59];
-  aa.b4 = pt2_c[20] ^ bb.b4 ^ key_c[12] ^ tw2_c[60];
-  aa.b5 = pt2_c[21] ^ bb.b5 ^ key_c[13] ^ tw2_c[61];
-  aa.b6 = pt2_c[22] ^ bb.b6 ^ key_c[14] ^ tw2_c[62];
-  aa.b7 = pt2_c[23] ^ bb.b7 ^ key_c[15] ^ tw2_c[63];
+  bb.b0 = pt2[8];
+  bb.b1 = pt2[9];
+  bb.b2 = pt2[10];
+  bb.b3 = pt2[11];
+  bb.b4 = pt2[12];
+  bb.b5 = pt2[13];
+  bb.b6 = pt2[14];
+  bb.b7 = pt2[15];
+  aa.b0 = pt2[16] ^ bb.b0 ^ key_12[8]  ^ tw2[56];
+  aa.b1 = pt2[17] ^ bb.b1 ^ key_12[9]  ^ tw2[57];
+  aa.b2 = pt2[18] ^ bb.b2 ^ key_12[10] ^ tw2[58];
+  aa.b3 = pt2[19] ^ bb.b3 ^ key_12[11] ^ tw2[59];
+  aa.b4 = pt2[20] ^ bb.b4 ^ key_12[12] ^ tw2[60];
+  aa.b5 = pt2[21] ^ bb.b5 ^ key_12[13] ^ tw2[61];
+  aa.b6 = pt2[22] ^ bb.b6 ^ key_12[14] ^ tw2[62];
+  aa.b7 = pt2[23] ^ bb.b7 ^ key_12[15] ^ tw2[63];
   aa = sbox(aa);
 
-  cc.b0 = pt2_c[0]  ^ bb.b0 ^ key_c[0] ^ tw2_c[48];
-  cc.b1 = pt2_c[1]  ^ bb.b1 ^ key_c[1] ^ tw2_c[49];
-  cc.b2 = pt2_c[2]  ^ bb.b2 ^ key_c[2] ^ tw2_c[50];
-  cc.b3 = pt2_c[3]  ^ bb.b3 ^ key_c[3] ^ tw2_c[51];
-  cc.b4 = pt2_c[4]  ^ bb.b4 ^ key_c[4] ^ tw2_c[52];
-  cc.b5 = pt2_c[5]  ^ bb.b5 ^ key_c[5] ^ tw2_c[53];
-  cc.b6 = pt2_c[6]  ^ bb.b6 ^ key_c[6] ^ tw2_c[54];
-  cc.b7 = pt2_c[7]  ^ bb.b7 ^ key_c[7] ^ tw2_c[55];
+  cc.b0 = pt2[0]  ^ bb.b0 ^ key_12[0] ^ tw2[48];
+  cc.b1 = pt2[1]  ^ bb.b1 ^ key_12[1] ^ tw2[49];
+  cc.b2 = pt2[2]  ^ bb.b2 ^ key_12[2] ^ tw2[50];
+  cc.b3 = pt2[3]  ^ bb.b3 ^ key_12[3] ^ tw2[51];
+  cc.b4 = pt2[4]  ^ bb.b4 ^ key_12[4] ^ tw2[52];
+  cc.b5 = pt2[5]  ^ bb.b5 ^ key_12[5] ^ tw2[53];
+  cc.b6 = pt2[6]  ^ bb.b6 ^ key_12[6] ^ tw2[54];
+  cc.b7 = pt2[7]  ^ bb.b7 ^ key_12[7] ^ tw2[55];
   cc = sbox(cc);
 
-  bb.b0 ^= aa.b0  ^ cc.b0 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 0) & 1)) ^ tw2_c[40];
-  bb.b1 ^= aa.b1  ^ cc.b1 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 1) & 1)) ^ tw2_c[41];
-  bb.b2 ^= aa.b2  ^ cc.b2 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 2) & 1)) ^ tw2_c[42];
-  bb.b3 ^= aa.b3  ^ cc.b3 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 3) & 1)) ^ tw2_c[43];
-  bb.b4 ^= aa.b4  ^ cc.b4 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 4) & 1)) ^ tw2_c[44];
-  bb.b5 ^= aa.b5  ^ cc.b5 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 5) & 1)) ^ tw2_c[45];
-  bb.b6 ^= aa.b6  ^ cc.b6 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 6) & 1)) ^ tw2_c[46];
-  bb.b7 ^= aa.b7  ^ cc.b7 ^ (0 - ((key3_c[blockIdx.x >> 9] >> 7) & 1)) ^ tw2_c[47];
+  bb.b0 ^= aa.b0  ^ cc.b0 ^ (0 - ((key_3[blockIdx.x >> 9] >> 0) & 1)) ^ tw2[40];
+  bb.b1 ^= aa.b1  ^ cc.b1 ^ (0 - ((key_3[blockIdx.x >> 9] >> 1) & 1)) ^ tw2[41];
+  bb.b2 ^= aa.b2  ^ cc.b2 ^ (0 - ((key_3[blockIdx.x >> 9] >> 2) & 1)) ^ tw2[42];
+  bb.b3 ^= aa.b3  ^ cc.b3 ^ (0 - ((key_3[blockIdx.x >> 9] >> 3) & 1)) ^ tw2[43];
+  bb.b4 ^= aa.b4  ^ cc.b4 ^ (0 - ((key_3[blockIdx.x >> 9] >> 4) & 1)) ^ tw2[44];
+  bb.b5 ^= aa.b5  ^ cc.b5 ^ (0 - ((key_3[blockIdx.x >> 9] >> 5) & 1)) ^ tw2[45];
+  bb.b6 ^= aa.b6  ^ cc.b6 ^ (0 - ((key_3[blockIdx.x >> 9] >> 6) & 1)) ^ tw2[46];
+  bb.b7 ^= aa.b7  ^ cc.b7 ^ (0 - ((key_3[blockIdx.x >> 9] >> 7) & 1)) ^ tw2[47];
   bb = sbox(bb);
 
   /* PT2: Round 2. */
-  aa.b0 ^= bb.b0 ^ (0 - ((blockIdx.x  >> 1) & 1)) ^ tw2_c[32];
-  aa.b1 ^= bb.b1 ^ (0 - ((blockIdx.x  >> 2) & 1)) ^ tw2_c[33];
-  aa.b2 ^= bb.b2 ^ (0 - ((blockIdx.x  >> 3) & 1)) ^ tw2_c[34];
-  aa.b3 ^= bb.b3 ^ (0 - ((blockIdx.x  >> 4) & 1)) ^ tw2_c[35];
-  aa.b4 ^= bb.b4 ^ (0 - ((blockIdx.x  >> 5) & 1)) ^ tw2_c[36];
-  aa.b5 ^= bb.b5 ^ (0 - ((blockIdx.x  >> 6) & 1)) ^ tw2_c[37];
-  aa.b6 ^= bb.b6 ^ (0 - ((blockIdx.x  >> 7) & 1)) ^ tw2_c[38];
-  aa.b7 ^= bb.b7 ^ (0 - ((blockIdx.x  >> 8) & 1)) ^ tw2_c[39];
+  aa.b0 ^= bb.b0 ^ (0 - ((blockIdx.x  >> 1) & 1)) ^ tw2[32];
+  aa.b1 ^= bb.b1 ^ (0 - ((blockIdx.x  >> 2) & 1)) ^ tw2[33];
+  aa.b2 ^= bb.b2 ^ (0 - ((blockIdx.x  >> 3) & 1)) ^ tw2[34];
+  aa.b3 ^= bb.b3 ^ (0 - ((blockIdx.x  >> 4) & 1)) ^ tw2[35];
+  aa.b4 ^= bb.b4 ^ (0 - ((blockIdx.x  >> 5) & 1)) ^ tw2[36];
+  aa.b5 ^= bb.b5 ^ (0 - ((blockIdx.x  >> 6) & 1)) ^ tw2[37];
+  aa.b6 ^= bb.b6 ^ (0 - ((blockIdx.x  >> 7) & 1)) ^ tw2[38];
+  aa.b7 ^= bb.b7 ^ (0 - ((blockIdx.x  >> 8) & 1)) ^ tw2[39];
   aa = sbox(aa);
 
-  cc.b0 ^= bb.b0 ^ (0 - ((threadIdx.x >> 3) & 1)) ^ tw2_c[24];
-  cc.b1 ^= bb.b1 ^ (0 - ((threadIdx.x >> 4) & 1)) ^ tw2_c[25];
-  cc.b2 ^= bb.b2 ^ (0 - ((threadIdx.x >> 5) & 1)) ^ tw2_c[26];
-  cc.b3 ^= bb.b3 ^ (0 - ((threadIdx.x >> 6) & 1)) ^ tw2_c[27];
-  cc.b4 ^= bb.b4 ^ (0 - ((threadIdx.x >> 7) & 1)) ^ tw2_c[28];
-  cc.b5 ^= bb.b5 ^ (0 - ((threadIdx.x >> 8) & 1)) ^ tw2_c[29];
-  cc.b6 ^= bb.b6 ^ (0 - ((threadIdx.x >> 9) & 1)) ^ tw2_c[30];
-  cc.b7 ^= bb.b7 ^ (0 -  (blockIdx.x        & 1)) ^ tw2_c[31];
+  cc.b0 ^= bb.b0 ^ (0 - ((threadIdx.x >> 3) & 1)) ^ tw2[24];
+  cc.b1 ^= bb.b1 ^ (0 - ((threadIdx.x >> 4) & 1)) ^ tw2[25];
+  cc.b2 ^= bb.b2 ^ (0 - ((threadIdx.x >> 5) & 1)) ^ tw2[26];
+  cc.b3 ^= bb.b3 ^ (0 - ((threadIdx.x >> 6) & 1)) ^ tw2[27];
+  cc.b4 ^= bb.b4 ^ (0 - ((threadIdx.x >> 7) & 1)) ^ tw2[28];
+  cc.b5 ^= bb.b5 ^ (0 - ((threadIdx.x >> 8) & 1)) ^ tw2[29];
+  cc.b6 ^= bb.b6 ^ (0 - ((threadIdx.x >> 9) & 1)) ^ tw2[30];
+  cc.b7 ^= bb.b7 ^ (0 -  (blockIdx.x        & 1)) ^ tw2[31];
   cc = sbox(cc);
 
-  bb.b0 ^= aa.b0 ^ cc.b0 ^ 0xaaaaaaaa                     ^ tw2_c[16];
-  bb.b1 ^= aa.b1 ^ cc.b1 ^ 0xcccccccc                     ^ tw2_c[17];
-  bb.b2 ^= aa.b2 ^ cc.b2 ^ 0xf0f0f0f0                     ^ tw2_c[18];
-  bb.b3 ^= aa.b3 ^ cc.b3 ^ 0xff00ff00                     ^ tw2_c[19];
-  bb.b4 ^= aa.b4 ^ cc.b4 ^ 0xffff0000                     ^ tw2_c[20];
-  bb.b5 ^= aa.b5 ^ cc.b5 ^ (0 - ((threadIdx.x >> 0) & 1)) ^ tw2_c[21];
-  bb.b6 ^= aa.b6 ^ cc.b6 ^ (0 - ((threadIdx.x >> 1) & 1)) ^ tw2_c[22];
-  bb.b7 ^= aa.b7 ^ cc.b7 ^ (0 - ((threadIdx.x >> 2) & 1)) ^ tw2_c[23];
+  bb.b0 ^= aa.b0 ^ cc.b0 ^ 0xaaaaaaaa                     ^ tw2[16];
+  bb.b1 ^= aa.b1 ^ cc.b1 ^ 0xcccccccc                     ^ tw2[17];
+  bb.b2 ^= aa.b2 ^ cc.b2 ^ 0xf0f0f0f0                     ^ tw2[18];
+  bb.b3 ^= aa.b3 ^ cc.b3 ^ 0xff00ff00                     ^ tw2[19];
+  bb.b4 ^= aa.b4 ^ cc.b4 ^ 0xffff0000                     ^ tw2[20];
+  bb.b5 ^= aa.b5 ^ cc.b5 ^ (0 - ((threadIdx.x >> 0) & 1)) ^ tw2[21];
+  bb.b6 ^= aa.b6 ^ cc.b6 ^ (0 - ((threadIdx.x >> 1) & 1)) ^ tw2[22];
+  bb.b7 ^= aa.b7 ^ cc.b7 ^ (0 - ((threadIdx.x >> 2) & 1)) ^ tw2[23];
   bb = sbox(bb);
 
   /* PT2: Round 3c. */
-  cc.b0 ^= bb.b0 ^ key_c[8]  ^ tw2_c[0];
-  cc.b1 ^= bb.b1 ^ key_c[9]  ^ tw2_c[1];
-  cc.b2 ^= bb.b2 ^ key_c[10] ^ tw2_c[2];
-  cc.b3 ^= bb.b3 ^ key_c[11] ^ tw2_c[3];
-  cc.b4 ^= bb.b4 ^ key_c[12] ^ tw2_c[4];
-  cc.b5 ^= bb.b5 ^ key_c[13] ^ tw2_c[5];
-  cc.b6 ^= bb.b6 ^ key_c[14] ^ tw2_c[6];
-  cc.b7 ^= bb.b7 ^ key_c[15] ^ tw2_c[7];
+  cc.b0 ^= bb.b0 ^ key_12[8]  ^ tw2[0];
+  cc.b1 ^= bb.b1 ^ key_12[9]  ^ tw2[1];
+  cc.b2 ^= bb.b2 ^ key_12[10] ^ tw2[2];
+  cc.b3 ^= bb.b3 ^ key_12[11] ^ tw2[3];
+  cc.b4 ^= bb.b4 ^ key_12[12] ^ tw2[4];
+  cc.b5 ^= bb.b5 ^ key_12[13] ^ tw2[5];
+  cc.b6 ^= bb.b6 ^ key_12[14] ^ tw2[6];
+  cc.b7 ^= bb.b7 ^ key_12[15] ^ tw2[7];
   cc = sbox(cc);
 
   int rr;
@@ -1456,15 +1391,13 @@ __global__ void upper_678(int *ret) {
   rr |= cc.b7 ^ xx.b7;
   rr = ~rr;
 
-  if (threadIdx.x < 32) {
-    found[threadIdx.x] = 0;
-  }
+  found[threadIdx.x] = 0;
 
   __syncthreads();
 
   if (rr != 0) {
     int ptr = atomicAdd_block(found, __popc(rr));
-    int k3456 = (key3_c[blockIdx.x >> 9] << 24) | ((blockIdx.x & 0x1ff) << 15) | (threadIdx.x << 5);
+    int k3456 = (key_3[blockIdx.x >> 9] << 24) | ((blockIdx.x & 0x1ff) << 15) | (threadIdx.x << 5);
     while (rr != 0) {
       int low5 = __ffs(rr) - 1;
       rr ^= 1 << low5;
@@ -1529,7 +1462,7 @@ int get_num_cuda_devices() {
   return count;
 }
 
-#define CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem)\
+#define CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem)\
   if (err != cudaSuccess) {\
     fprintf(stderr, "CUDA error. (%s:%d)\n", __FILE__, __LINE__);\
     if (stream != NULL) { cudaStreamDestroy(stream); }\
@@ -1538,7 +1471,7 @@ int get_num_cuda_devices() {
     return;\
   }
 
-void cuda_678(worker_param_t params, uint32_t threadid, uint32_t cuda_device) {
+void cuda_fast(worker_param_t params, uint32_t threadid, uint32_t cuda_device) {
 
   uint32_t *ret = NULL;
   int32_t *dev_mem = NULL;
@@ -1546,24 +1479,24 @@ void cuda_678(worker_param_t params, uint32_t threadid, uint32_t cuda_device) {
   cudaStream_t stream = NULL;
 
   cudaError_t err = cudaSetDevice(cuda_device);
-  CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+  CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem);
 
   /* Allocate host memory. */
-  err = cudaHostAlloc(&ret, sizeof(int32_t) * 0x4000000, cudaHostAllocDefault);
-  CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+  err = cudaHostAlloc(&ret, sizeof(int32_t) * 0x2000000, cudaHostAllocDefault);
+  CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem);
   assert(ret != NULL);
 
   /* Allocate device memory. */
 
-  err = cudaMalloc(&dev_mem, sizeof(int32_t) * 0x4000000);
-  CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
-  err = cudaMalloc(&dev_mem2, sizeof(int32_t) * 1000); /* FIXME!! */
-  CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+  err = cudaMalloc(&dev_mem, sizeof(int32_t) * 0x2000000);
+  CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+  err = cudaMalloc(&dev_mem2, sizeof(int32_t) * 1000);
+  CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem);
   assert(dev_mem != NULL);
   assert(dev_mem2 != NULL);
 
   err = cudaStreamCreate(&stream);
-  CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+  CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem);
 
   uint32_t k12;
   pair_t *pair;
@@ -1590,56 +1523,56 @@ void cuda_678(worker_param_t params, uint32_t threadid, uint32_t cuda_device) {
 
     err = cudaMemcpyToSymbolAsync(key_c, hi_key_bits, sizeof(int32_t) * 24, 0,
         cudaMemcpyHostToDevice, stream);
-    CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+    CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem);
     err = cudaMemcpyToSymbolAsync(pt1_c, pt1_bits,    sizeof(int32_t) * 24, 0,
         cudaMemcpyHostToDevice, stream);
-    CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+    CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem);
     err = cudaMemcpyToSymbolAsync(pt2_c, pt2_bits,    sizeof(int32_t) * 24, 0,
         cudaMemcpyHostToDevice, stream);
-    CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+    CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem);
     err = cudaMemcpyToSymbolAsync(ct1_c, ct1_bits,    sizeof(int32_t) * 24, 0,
         cudaMemcpyHostToDevice, stream);
-    CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+    CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem);
     err = cudaMemcpyToSymbolAsync(tw1_c, tw1_bits,    sizeof(int32_t) * 64, 0,
         cudaMemcpyHostToDevice, stream);
-    CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+    CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem);
     err = cudaMemcpyToSymbolAsync(tw2_c, tw2_bits,    sizeof(int32_t) * 64, 0,
         cudaMemcpyHostToDevice, stream);
-    CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+    CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem);
     err = cudaMemcpyToSymbolAsync(key3_c, pair->k3,   sizeof(int32_t) * 256, 0,
         cudaMemcpyHostToDevice, stream);
 
-    err = cudaMemsetAsync(dev_mem, 0, sizeof(int32_t) * 2000, stream);
-    CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
-    err = cudaMemsetAsync(dev_mem2, 0, sizeof(int32_t) * 1000, stream);
-    CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+    err = cudaMemsetAsync(dev_mem, 0, sizeof(int32_t) * 1, stream);
+    CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+    err = cudaMemsetAsync(dev_mem2, 0, sizeof(int32_t) * 1, stream);
+    CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem);
 
-    upper_678<<<512 * pair->num_k3, 1024, 0, stream>>>(dev_mem);
+    find_candidates<<<512 * pair->num_k3, 1024, 0, stream>>>(dev_mem, 0);
     err = cudaMemcpyAsync(ret, dev_mem, sizeof(int32_t) * 1, cudaMemcpyDefault, stream);
-    CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+    CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem);
 
     err = cudaStreamSynchronize(stream);
-    CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+    CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem);
 
     int num_blocks = (ret[0] + 129) / 128;
     switch (params.nrounds) {
       case 6:
-        test_candidates<6><<<num_blocks, 1024, 0, stream>>>(dev_mem, dev_mem2, ret[0]);
+        test_candidates<6><<<num_blocks, 1024, 0, stream>>>(dev_mem, dev_mem2, ret[0], 0);
         break;
       case 7:
-        test_candidates<7><<<num_blocks, 1024, 0, stream>>>(dev_mem, dev_mem2, ret[0]);
+        test_candidates<7><<<num_blocks, 1024, 0, stream>>>(dev_mem, dev_mem2, ret[0], 0);
         break;
       case 8:
-        test_candidates<8><<<num_blocks, 1024, 0, stream>>>(dev_mem, dev_mem2, ret[0]);
+        test_candidates<8><<<num_blocks, 1024, 0, stream>>>(dev_mem, dev_mem2, ret[0], 0);
         break;
       default:
         assert(0);
     }
     err = cudaMemcpyAsync(ret, dev_mem2, sizeof(int32_t) * 1000, cudaMemcpyDefault, stream);
-    CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+    CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem);
 
     err = cudaStreamSynchronize(stream);
-    CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+    CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem);
 
     for (int i = 0; i < ret[0]; i++) {
       uint64_t key = ((uint64_t)k12 << 40) | ((uint64_t)ret[i * 2 + 1] << 8) | ret[i * 2 + 2];
@@ -1658,26 +1591,26 @@ void cuda_678(worker_param_t params, uint32_t threadid, uint32_t cuda_device) {
   cudaDeviceReset();
 }
 
-void cuda_brute_8(worker_param_t params, uint32_t threadid, uint32_t cuda_device) {
+void cuda_brute(worker_param_t params, uint32_t threadid, uint32_t cuda_device, int rounds) {
   uint32_t *ret = NULL;
   int32_t *dev_mem = NULL;
   cudaStream_t stream = NULL;
 
   cudaError_t err = cudaSetDevice(cuda_device);
-  CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+  CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem);
 
   /* Allocate host memory. */
   err = cudaHostAlloc(&ret, sizeof(int32_t) * 2000, cudaHostAllocDefault);
-  CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+  CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem);
   assert(ret != NULL);
 
   /* Allocate device memory. */
   err = cudaMalloc(&dev_mem, sizeof(int32_t) * 2000);
-  CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+  CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem);
   assert(dev_mem != NULL);
 
   err = cudaStreamCreate(&stream);
-  CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+  CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem);
 
   uint32_t k12;
   pair_t *pair;
@@ -1689,8 +1622,11 @@ void cuda_brute_8(worker_param_t params, uint32_t threadid, uint32_t cuda_device
   while (!g_exit && get_next_678(threadid, &k12, &pair)) {
     for (int k3 = 0; !g_exit && k3 < 0x100; k3++) {
       uint64_t k123 = (k12 << 8) | k3;
-      uint32_t ct1p = dec_one_round_3(pair->t1.ct, k123 ^ (pair->t1.tw & 0xffffff));
       uint32_t pt1p = enc_one_round_3(pair->t1.pt, k123 ^ (pair->t1.tw >> 40));
+      uint32_t ct1p = pair->t1.ct;
+      if (rounds == 8 || rounds == 15) {
+        ct1p = dec_one_round_3(pair->t1.ct, k123 ^ (pair->t1.tw & 0xffffff));
+      }
       uint32_t ca = ct1p >> 16;
       uint32_t cb = (ct1p >> 8) & 0xff;
       uint32_t cc = ct1p & 0xff;
@@ -1711,27 +1647,61 @@ void cuda_brute_8(worker_param_t params, uint32_t threadid, uint32_t cuda_device
 
       err = cudaMemcpyToSymbolAsync(key_c, hi_key_bits, sizeof(int32_t) * 24, 0,
           cudaMemcpyHostToDevice, stream);
-      CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+      CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem);
       err = cudaMemcpyToSymbolAsync(pt1_c, pt1_bits,    sizeof(int32_t) * 24, 0,
           cudaMemcpyHostToDevice, stream);
-      CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+      CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem);
       err = cudaMemcpyToSymbolAsync(ct1_c, ct1_bits,    sizeof(int32_t) * 24, 0,
           cudaMemcpyHostToDevice, stream);
-      CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+      CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem);
       err = cudaMemcpyToSymbolAsync(tw1_c, tw1_bits,    sizeof(int32_t) * 64, 0,
           cudaMemcpyHostToDevice, stream);
-      CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+      CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem);
 
       err = cudaMemsetAsync(dev_mem, 0, sizeof(int32_t) * 2000, stream);
-      CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+      CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem);
 
-      brute_force_8<<<0x20000, 1024, 0, stream>>>(dev_mem, 0);
+      switch (rounds) {
+        case 6:
+          brute_force<6><<<0x20000, 1024, 0, stream>>>(dev_mem, 0);
+          break;
+        case 7:
+          brute_force<7><<<0x20000, 1024, 0, stream>>>(dev_mem, 0);
+          break;
+        case 8:
+          brute_force<7><<<0x20000, 1024, 0, stream>>>(dev_mem, 0);
+          break;
+        case 9:
+          brute_force<9><<<0x20000, 1024, 0, stream>>>(dev_mem, 0);
+          break;
+        case 10:
+          brute_force<10><<<0x20000, 1024, 0, stream>>>(dev_mem, 0);
+          break;
+        case 11:
+          brute_force<11><<<0x20000, 1024, 0, stream>>>(dev_mem, 0);
+          break;
+        case 12:
+          brute_force<12><<<0x20000, 1024, 0, stream>>>(dev_mem, 0);
+          break;
+        case 13:
+          brute_force<13><<<0x20000, 1024, 0, stream>>>(dev_mem, 0);
+          break;
+        case 14:
+          brute_force<14><<<0x20000, 1024, 0, stream>>>(dev_mem, 0);
+          break;
+        case 15:
+          brute_force<14><<<0x20000, 1024, 0, stream>>>(dev_mem, 0);
+          break;
+        case 16:
+          brute_force<16><<<0x20000, 1024, 0, stream>>>(dev_mem, 0);
+          break;
+      }
 
       err = cudaMemcpyAsync(ret, dev_mem, sizeof(int32_t) * 2000, cudaMemcpyDefault, stream);
-      CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+      CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem);
 
       err = cudaStreamSynchronize(stream);
-      CUDA_678_RETURN_ON_ERROR(err, stream, ret, dev_mem);
+      CUDA_FAST_RETURN_ON_ERROR(err, stream, ret, dev_mem);
 
       uint64_t bkey = k123 << 32;
       for (int i = 0; i < ret[0]; i++) {

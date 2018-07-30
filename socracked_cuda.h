@@ -23,8 +23,8 @@ extern "C" {
 #endif
   void list_cuda_devices();
   int get_num_cuda_devices();
-  void cuda_678(worker_param_t params, uint32_t threadid, uint32_t cuda_device);
-  void cuda_brute_8(worker_param_t params, uint32_t threadid, uint32_t cuda_device);
+  void cuda_fast(worker_param_t params, uint32_t threadid, uint32_t cuda_device);
+  void cuda_brute(worker_param_t params, uint32_t threadid, uint32_t cuda_device, int rounds);
 #ifdef __cplusplus
 }
 #endif

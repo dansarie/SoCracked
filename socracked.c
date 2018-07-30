@@ -4,7 +4,11 @@
    MIL-STD-188-141 and recovers all candidate keys in time proportional to
    2^9 for two rounds, 2^16 for three rounds, 2^33 for four rounds,
    2^49 for five rounds, 2^46 for six rounds, 2^46 for seven rounds, and
-   2^45 for eight rounds.
+   2^45 for eight rounds. Attacks on more than six rounds require certain
+   properties of the plaintext-ciphertext-tuple tweaks. In particular, this
+   means that successful attacks require a couple of thousand tuples that
+   differ in tweak byte five only. The program also performs known-plaintext
+   brute force attacks on up to sixteen rounds of the cipher.
 
    Copyright (C) 2016-2018 Marcus Dansarie <marcus@dansarie.se>
 
@@ -137,7 +141,7 @@ bool get_next_678(uint32_t threadid, uint32_t *k12, pair_t **pair) {
     g_next = 0;
     g_next_pair += 1;
   }
-  if (g_prof && g_next == (0xc228 + 100)) {
+  if (g_prof && g_next > 0xc228) {
     g_next_pair = g_pairs.num_pairs;
   }
   g_current_pair = **pair;
@@ -723,7 +727,7 @@ exit678:
   return NULL;
 }
 
-void *cuda_crack678(void *p, bool brute) {
+void *cuda_crack(void *p, bool brute) {
   worker_param_t params = *((worker_param_t*)p);
   assert(params.num_tuples > 1);
   assert(params.nrounds > 5 && params.nrounds < 9);
@@ -741,9 +745,9 @@ void *cuda_crack678(void *p, bool brute) {
   }
 
   if (brute) {
-    cuda_brute_8(params, threadid, cuda_device);
+    cuda_brute(params, threadid, cuda_device, params.nrounds);
   } else {
-    cuda_678(params, threadid, cuda_device);
+    cuda_fast(params, threadid, cuda_device);
   }
 
   pthread_mutex_lock(&g_threadcount_lock);
@@ -753,12 +757,12 @@ void *cuda_crack678(void *p, bool brute) {
   return NULL;
 }
 
-void *cuda_crack678_brute(void *p) {
-  return cuda_crack678(p, true);
+void *cuda_crack_brute(void *p) {
+  return cuda_crack(p, true);
 }
 
-void *cuda_crack678_fast(void *p) {
-  return cuda_crack678(p, false);
+void *cuda_crack_fast(void *p) {
+  return cuda_crack(p, false);
 }
 
 /* Initializes a list of tuple-pairs. */
@@ -1156,8 +1160,12 @@ int main(int argc, char **argv) {
 
   /* Check if the number of rounds is supported. */
   worker_params.nrounds = atoi(argv[1]);
-  if (worker_params.nrounds < 2 || worker_params.nrounds > 8) {
-    fprintf(stderr, "Bad number of rounds. Only 2 - 8 rounds are supported.\n");
+  int max_rounds = 8;
+  if (CUDA_ENABLED) {
+    max_rounds = 16;
+  }
+  if (worker_params.nrounds < 2 || worker_params.nrounds > max_rounds) {
+    fprintf(stderr, "Bad number of rounds. Only 2 - %d rounds are supported.\n", max_rounds);
     return 1;
   }
 
@@ -1269,8 +1277,8 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  /* Perform filtering step when cracking more than 5 rounds. */
-  if (worker_params.nrounds > 5) {
+  /* Perform filtering step when cracking 5-8 rounds. */
+  if (worker_params.nrounds > 5 && worker_params.nrounds <= 8) {
     set_status("Filtering pairs. ");
     draw_foreground(start_time, psuccess, worker_params.nrounds, screen, false);
 
@@ -1397,7 +1405,7 @@ int main(int argc, char **argv) {
       }
       g_pairs.num_pairs = 1;
       crack_func = crack678;
-      cuda_crack_func = cuda_crack678_fast;
+      cuda_crack_func = cuda_crack_fast;
       break;
     case 8:
       if (g_pairs.num_pairs == 0) {
@@ -1412,25 +1420,38 @@ int main(int argc, char **argv) {
           pa.t2 = worker_params.tuples[1];
           add_pair(&g_pairs, pa);
           crack_func = NULL;
-          cuda_crack_func = cuda_crack678_brute;
+          cuda_crack_func = cuda_crack_brute;
         } else {
-          if (g_pairs.num_pairs == 0) {
-            endwin();
-            free(worker_params.tuples);
-            cleanup_globals();
-            printf("No candidate pairs found.\n");
-            return 0;
-          }
+          endwin();
+          free(worker_params.tuples);
+          cleanup_globals();
+          printf("No candidate pairs found.\n");
+          return 0;
         }
       } else {
         psuccess = 100.0 * (1.0 - pow(0.989795918, g_pairs.num_pairs));
         crack_func = crack678;
-        cuda_crack_func = cuda_crack678_fast;
+        cuda_crack_func = cuda_crack_fast;
       }
       break;
     default:
-      fprintf(stderr, "Error: %d\n", worker_params.nrounds);
-      assert(0);
+      /* More than eight rounds: brute force only. */
+      if (CUDA_ENABLED) {
+        psuccess = 100.0;
+        pair_t pa;
+        for (uint16_t i = 0; i < 0x100; i++) {
+          pa.k3[i] = i;
+        }
+        pa.num_k3 = 0x100;
+        pa.t1 = worker_params.tuples[0];
+        pa.t2 = worker_params.tuples[1];
+        add_pair(&g_pairs, pa);
+        crack_func = NULL;
+        cuda_crack_func = cuda_crack_brute;
+      } else {
+        fprintf(stderr, "Error: %d\n", worker_params.nrounds);
+        assert(0);
+      }
   }
 
   /* Initialize mutexes. */
@@ -1453,9 +1474,9 @@ int main(int argc, char **argv) {
       cleanup_globals();
       return 1;
     }
-    /*if (g_prof) {
+    if (g_prof) {
         g_num_cuda_devices = g_num_cuda_devices > 0 ? 1 : 0;
-    }*/
+    }
   } else {
     g_num_cuda_devices = 0;
   }
@@ -1488,7 +1509,7 @@ int main(int argc, char **argv) {
   }
 
   /* Wait for completion and keep screen updated. */
-  if (CUDA_ENABLED && cuda_crack_func == cuda_crack678_brute) {
+  if (CUDA_ENABLED && cuda_crack_func == cuda_crack_brute) {
     set_status("Performing brute force key search.");
   } else {
     set_status("Performing key search.");
@@ -1497,11 +1518,11 @@ int main(int argc, char **argv) {
   bool userquit = run_progress_screen(screen, start_time, psuccess, worker_params.nrounds);
 
   if (CUDA_ENABLED && !userquit && worker_params.nrounds == 8 && get_keys_found() == 0
-      && cuda_crack_func != cuda_crack678_brute) {
+      && cuda_crack_func != cuda_crack_brute) {
     set_status("Performing brute force key search.");
     g_pairs.num_pairs = 1;
 
-    if (start_threads(NULL, cuda_crack678_brute, worker_params) != true) {
+    if (start_threads(NULL, cuda_crack_brute, worker_params) != true) {
       free(worker_params.tuples);
       cleanup_globals();
       return 1;
