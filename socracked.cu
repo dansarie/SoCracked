@@ -2,7 +2,7 @@
 
    CUDA bitslice implementation of attacks on SoCracked.
 
-   Copyright (C) 2018 Marcus Dansarie <marcus@dansarie.se>
+   Copyright (C) 2017-2018 Marcus Dansarie <marcus@dansarie.se>
 
    This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -444,14 +444,14 @@ __device__ __forceinline__ twentyfourbits encrypt_round(twentyfourbits bits, int
       cur.b0 = (0 - ((bidx >> 1)  & 1)) ^ tw1_c[tw_off_a]     ^ bits.b.b0 ^ bits.a.b0;
       break;
     case 1:
-      cur.b7 = key_hi[23]               ^ tw1_c[tw_off_a + 7] ^ bits.b.b7 ^ bits.c.b7;
-      cur.b6 = key_hi[22]               ^ tw1_c[tw_off_a + 6] ^ bits.b.b6 ^ bits.c.b6;
-      cur.b5 = key_hi[21]               ^ tw1_c[tw_off_a + 5] ^ bits.b.b5 ^ bits.c.b5;
-      cur.b4 = key_hi[20]               ^ tw1_c[tw_off_a + 4] ^ bits.b.b4 ^ bits.c.b4;
-      cur.b3 = key_hi[19]               ^ tw1_c[tw_off_a + 3] ^ bits.b.b3 ^ bits.c.b3;
-      cur.b2 = key_hi[18]               ^ tw1_c[tw_off_a + 2] ^ bits.b.b2 ^ bits.c.b2;
-      cur.b1 = key_hi[17]               ^ tw1_c[tw_off_a + 1] ^ bits.b.b1 ^ bits.c.b1;
-      cur.b0 = key_hi[16]               ^ tw1_c[tw_off_a]     ^ bits.b.b0 ^ bits.c.b0;
+      cur.b7 = key_hi[23]               ^ tw1_c[tw_off_a + 7] ^ bits.b.b7 ^ bits.a.b7;
+      cur.b6 = key_hi[22]               ^ tw1_c[tw_off_a + 6] ^ bits.b.b6 ^ bits.a.b6;
+      cur.b5 = key_hi[21]               ^ tw1_c[tw_off_a + 5] ^ bits.b.b5 ^ bits.a.b5;
+      cur.b4 = key_hi[20]               ^ tw1_c[tw_off_a + 4] ^ bits.b.b4 ^ bits.a.b4;
+      cur.b3 = key_hi[19]               ^ tw1_c[tw_off_a + 3] ^ bits.b.b3 ^ bits.a.b3;
+      cur.b2 = key_hi[18]               ^ tw1_c[tw_off_a + 2] ^ bits.b.b2 ^ bits.a.b2;
+      cur.b1 = key_hi[17]               ^ tw1_c[tw_off_a + 1] ^ bits.b.b1 ^ bits.a.b1;
+      cur.b0 = key_hi[16]               ^ tw1_c[tw_off_a]     ^ bits.b.b0 ^ bits.a.b0;
       break;
     case 2:
       cur.b7 = (0 - ((bidx >> 16) & 1)) ^ tw1_c[tw_off_a + 7] ^ bits.b.b7 ^ bits.a.b7;
@@ -470,8 +470,8 @@ __device__ __forceinline__ twentyfourbits encrypt_round(twentyfourbits bits, int
       cur.b4 = 0xffff0000               ^ tw1_c[tw_off_a + 4] ^ bits.b.b4 ^ bits.a.b4;
       cur.b3 = 0xff00ff00               ^ tw1_c[tw_off_a + 3] ^ bits.b.b3 ^ bits.a.b3;
       cur.b2 = 0xf0f0f0f0               ^ tw1_c[tw_off_a + 2] ^ bits.b.b2 ^ bits.a.b2;
-      cur.b1 = 0xcccccccc               ^ tw1_c[tw_off_a + 1]  ^ bits.b.b1 ^ bits.a.b1;
-      cur.b0 = 0xaaaaaaaa               ^ tw1_c[tw_off_a]      ^ bits.b.b0 ^ bits.a.b0;
+      cur.b1 = 0xcccccccc               ^ tw1_c[tw_off_a + 1] ^ bits.b.b1 ^ bits.a.b1;
+      cur.b0 = 0xaaaaaaaa               ^ tw1_c[tw_off_a]     ^ bits.b.b0 ^ bits.a.b0;
       break;
     case 4:
       cur.b7 = key_hi[7]                ^ tw1_c[tw_off_a + 7] ^ bits.b.b7 ^ bits.a.b7;
@@ -539,6 +539,7 @@ __device__ __forceinline__ twentyfourbits encrypt_round(twentyfourbits bits, int
       cur.b2 = key_hi[10]               ^ tw1_c[tw_off_c + 2] ^ bits.b.b2 ^ bits.c.b2;
       cur.b1 = key_hi[9]                ^ tw1_c[tw_off_c + 1] ^ bits.b.b1 ^ bits.c.b1;
       cur.b0 = key_hi[8]                ^ tw1_c[tw_off_c]     ^ bits.b.b0 ^ bits.c.b0;
+      break;
     case 2:
       cur.b7 = (0 - ((bidx >> 8)  & 1)) ^ tw1_c[tw_off_c + 7] ^ bits.b.b7 ^ bits.c.b7;
       cur.b6 = (0 - ((bidx >> 7)  & 1)) ^ tw1_c[tw_off_c + 6] ^ bits.b.b6 ^ bits.c.b6;
@@ -625,6 +626,7 @@ __device__ __forceinline__ twentyfourbits encrypt_round(twentyfourbits bits, int
       cur.b2 = key_hi[2]                ^ tw1_c[tw_off_b + 2] ^ bits.b.b2;
       cur.b1 = key_hi[1]                ^ tw1_c[tw_off_b + 1] ^ bits.b.b1;
       cur.b0 = key_hi[0]                ^ tw1_c[tw_off_b]     ^ bits.b.b0;
+      break;
     case 2:
       cur.b7 = (0 -  (bidx        & 1)) ^ tw1_c[tw_off_b + 7] ^ bits.b.b7;
       cur.b6 = (0 - ((tidx >> 9)  & 1)) ^ tw1_c[tw_off_b + 6] ^ bits.b.b6;
@@ -1186,7 +1188,6 @@ __global__ void find_candidates(int *ret, int offset) {
   volatile __shared__ int tw1[64];
   volatile __shared__ int tw2[64];
   volatile __shared__ int key_12[16];
-  volatile __shared__ int key_3[256];
   __shared__ int found[1024];
 
   if (threadIdx.x < 16) {
@@ -1200,11 +1201,10 @@ __global__ void find_candidates(int *ret, int offset) {
     tw1[threadIdx.x] = tw1_c[threadIdx.x + offset * 64];
     tw2[threadIdx.x] = tw2_c[threadIdx.x + offset * 64];
   }
-  if (threadIdx.x < 256) {
-    key_3[threadIdx.x] = key3_c[threadIdx.x + offset * 256];
-  }
 
   __syncthreads();
+
+  int key3 = key3_c[blockIdx.x >> 9];
 
   eightbits aa, bb, cc;
 
@@ -1237,14 +1237,14 @@ __global__ void find_candidates(int *ret, int offset) {
   cc.b7 = pt1[7]  ^ bb.b7 ^ key_12[7] ^ tw1[55];
   cc = sbox(cc);
 
-  bb.b0 ^= aa.b0  ^ cc.b0 ^ (0 - ((key_3[blockIdx.x >> 9] >> 0) & 1)) ^ tw1[40];
-  bb.b1 ^= aa.b1  ^ cc.b1 ^ (0 - ((key_3[blockIdx.x >> 9] >> 1) & 1)) ^ tw1[41];
-  bb.b2 ^= aa.b2  ^ cc.b2 ^ (0 - ((key_3[blockIdx.x >> 9] >> 2) & 1)) ^ tw1[42];
-  bb.b3 ^= aa.b3  ^ cc.b3 ^ (0 - ((key_3[blockIdx.x >> 9] >> 3) & 1)) ^ tw1[43];
-  bb.b4 ^= aa.b4  ^ cc.b4 ^ (0 - ((key_3[blockIdx.x >> 9] >> 4) & 1)) ^ tw1[44];
-  bb.b5 ^= aa.b5  ^ cc.b5 ^ (0 - ((key_3[blockIdx.x >> 9] >> 5) & 1)) ^ tw1[45];
-  bb.b6 ^= aa.b6  ^ cc.b6 ^ (0 - ((key_3[blockIdx.x >> 9] >> 6) & 1)) ^ tw1[46];
-  bb.b7 ^= aa.b7  ^ cc.b7 ^ (0 - ((key_3[blockIdx.x >> 9] >> 7) & 1)) ^ tw1[47];
+  bb.b0 ^= aa.b0  ^ cc.b0 ^ (0 - ((key3 >> 0) & 1)) ^ tw1[40];
+  bb.b1 ^= aa.b1  ^ cc.b1 ^ (0 - ((key3 >> 1) & 1)) ^ tw1[41];
+  bb.b2 ^= aa.b2  ^ cc.b2 ^ (0 - ((key3 >> 2) & 1)) ^ tw1[42];
+  bb.b3 ^= aa.b3  ^ cc.b3 ^ (0 - ((key3 >> 3) & 1)) ^ tw1[43];
+  bb.b4 ^= aa.b4  ^ cc.b4 ^ (0 - ((key3 >> 4) & 1)) ^ tw1[44];
+  bb.b5 ^= aa.b5  ^ cc.b5 ^ (0 - ((key3 >> 5) & 1)) ^ tw1[45];
+  bb.b6 ^= aa.b6  ^ cc.b6 ^ (0 - ((key3 >> 6) & 1)) ^ tw1[46];
+  bb.b7 ^= aa.b7  ^ cc.b7 ^ (0 - ((key3 >> 7) & 1)) ^ tw1[47];
   bb = sbox(bb);
 
   /* PT1: Round 2. */
@@ -1328,14 +1328,14 @@ __global__ void find_candidates(int *ret, int offset) {
   cc.b7 = pt2[7]  ^ bb.b7 ^ key_12[7] ^ tw2[55];
   cc = sbox(cc);
 
-  bb.b0 ^= aa.b0  ^ cc.b0 ^ (0 - ((key_3[blockIdx.x >> 9] >> 0) & 1)) ^ tw2[40];
-  bb.b1 ^= aa.b1  ^ cc.b1 ^ (0 - ((key_3[blockIdx.x >> 9] >> 1) & 1)) ^ tw2[41];
-  bb.b2 ^= aa.b2  ^ cc.b2 ^ (0 - ((key_3[blockIdx.x >> 9] >> 2) & 1)) ^ tw2[42];
-  bb.b3 ^= aa.b3  ^ cc.b3 ^ (0 - ((key_3[blockIdx.x >> 9] >> 3) & 1)) ^ tw2[43];
-  bb.b4 ^= aa.b4  ^ cc.b4 ^ (0 - ((key_3[blockIdx.x >> 9] >> 4) & 1)) ^ tw2[44];
-  bb.b5 ^= aa.b5  ^ cc.b5 ^ (0 - ((key_3[blockIdx.x >> 9] >> 5) & 1)) ^ tw2[45];
-  bb.b6 ^= aa.b6  ^ cc.b6 ^ (0 - ((key_3[blockIdx.x >> 9] >> 6) & 1)) ^ tw2[46];
-  bb.b7 ^= aa.b7  ^ cc.b7 ^ (0 - ((key_3[blockIdx.x >> 9] >> 7) & 1)) ^ tw2[47];
+  bb.b0 ^= aa.b0  ^ cc.b0 ^ (0 - ((key3 >> 0) & 1)) ^ tw2[40];
+  bb.b1 ^= aa.b1  ^ cc.b1 ^ (0 - ((key3 >> 1) & 1)) ^ tw2[41];
+  bb.b2 ^= aa.b2  ^ cc.b2 ^ (0 - ((key3 >> 2) & 1)) ^ tw2[42];
+  bb.b3 ^= aa.b3  ^ cc.b3 ^ (0 - ((key3 >> 3) & 1)) ^ tw2[43];
+  bb.b4 ^= aa.b4  ^ cc.b4 ^ (0 - ((key3 >> 4) & 1)) ^ tw2[44];
+  bb.b5 ^= aa.b5  ^ cc.b5 ^ (0 - ((key3 >> 5) & 1)) ^ tw2[45];
+  bb.b6 ^= aa.b6  ^ cc.b6 ^ (0 - ((key3 >> 6) & 1)) ^ tw2[46];
+  bb.b7 ^= aa.b7  ^ cc.b7 ^ (0 - ((key3 >> 7) & 1)) ^ tw2[47];
   bb = sbox(bb);
 
   /* PT2: Round 2. */
@@ -1397,7 +1397,7 @@ __global__ void find_candidates(int *ret, int offset) {
 
   if (rr != 0) {
     int ptr = atomicAdd_block(found, __popc(rr));
-    int k3456 = (key_3[blockIdx.x >> 9] << 24) | ((blockIdx.x & 0x1ff) << 15) | (threadIdx.x << 5);
+    int k3456 = (key3 << 24) | ((blockIdx.x & 0x1ff) << 15) | (threadIdx.x << 5);
     while (rr != 0) {
       int low5 = __ffs(rr) - 1;
       rr ^= 1 << low5;
@@ -1625,7 +1625,8 @@ void cuda_brute(worker_param_t params, uint32_t threadid, uint32_t cuda_device, 
       uint32_t pt1p = enc_one_round_3(pair->t1.pt, k123 ^ (pair->t1.tw >> 40));
       uint32_t ct1p = pair->t1.ct;
       if (rounds == 8 || rounds == 15) {
-        ct1p = dec_one_round_3(pair->t1.ct, k123 ^ (pair->t1.tw & 0xffffff));
+        int shift = rounds == 8 ? 0 : 24;
+        ct1p = dec_one_round_3(pair->t1.ct, k123 ^ ((pair->t1.tw >> shift) & 0xffffff));
       }
       uint32_t ca = ct1p >> 16;
       uint32_t cb = (ct1p >> 8) & 0xff;
