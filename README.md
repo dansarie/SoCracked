@@ -3,6 +3,8 @@
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.893133.svg)](https://doi.org/10.5281/zenodo.893133)
 [![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
+![Screenshot](screenshot.png?raw=true)
+
 SoCracked performs key-recovery attacks on the SoDark family of ciphers for
 automatic link establishment (ALE) in HF radios specified in MIL-STD-188-141.
 Attacks on up to five rounds are possible using virtually any two
