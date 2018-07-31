@@ -22,7 +22,6 @@
 #include <stdbool.h>
 
 /* Lookup tables for the SoDark s-box. */
-bool g_sbox_dec_init = false; /* Set to true by create_sodark_dec_sbox. */
 uint32_t g_sbox_dec[256];
 const uint32_t g_sbox_enc[] = {0x9c, 0xf2, 0x14, 0xc1, 0x8e, 0xcb, 0xb2, 0x65,
                                0x97, 0x7a, 0x60, 0x17, 0x92, 0xf9, 0x78, 0x41,
@@ -63,7 +62,6 @@ static inline void create_sodark_dec_sbox() {
   for (uint16_t i = 0; i < 256; i++) {
     g_sbox_dec[g_sbox_enc[i]] = i;
   }
-  g_sbox_dec_init = true;
 }
 
 /* Do one round of encryption with the SoDark-3 algorithm.
@@ -86,9 +84,6 @@ static inline uint32_t enc_one_round_3(uint32_t pt, uint32_t rkey) {
    ct   Ciphertext (24 bits).
    rkey Round key, i.e. three key bytes xored with three bytes of tweak. */
 static inline uint32_t dec_one_round_3(uint32_t ct, uint32_t rkey) {
-  if (!g_sbox_dec_init) {
-    create_sodark_dec_sbox();
-  }
   uint32_t ca = ct >> 16;
   uint32_t cb = (ct >> 8) & 0xff;
   uint32_t cc = ct & 0xff;
@@ -131,9 +126,6 @@ static inline uint64_t enc_one_round_6(uint64_t pt, uint64_t rkey) {
    ct   Ciphertext (48 bits).
    rkey Round key, i.e. six key bytes xored with six bytes of tweak. */
 static inline uint64_t dec_one_round_6(uint64_t ct, uint64_t rkey) {
-  if (!g_sbox_dec_init) {
-    create_sodark_dec_sbox();
-  }
   uint64_t ca =  ct >> 40;
   uint64_t cb = (ct >> 32) & 0xff;
   uint64_t cc = (ct >> 24) & 0xff;
@@ -180,9 +172,6 @@ static inline uint32_t encrypt_sodark_3(uint32_t rounds, uint32_t pt, uint64_t k
    tweak  Tweak (64 bits). */
 static inline uint32_t decrypt_sodark_3(uint32_t rounds, uint32_t ct, uint64_t key,
     uint64_t tweak) {
-  if (!g_sbox_dec_init) {
-    create_sodark_dec_sbox();
-  }
   uint32_t tshift = (24 * (rounds - 1)) % 64;
   uint32_t kshift = (24 * (rounds - 1)) % 56;
   tweak = (tweak >> (64 - tshift)) | (tweak << tshift);
@@ -221,9 +210,6 @@ static inline uint64_t encrypt_sodark_6(uint32_t rounds, uint64_t pt, uint64_t k
    tweak  Tweak (64 bits). */
 static inline uint64_t decrypt_sodark_6(uint32_t rounds, uint64_t ct, uint64_t key,
     uint64_t tweak) {
-  if (!g_sbox_dec_init) {
-    create_sodark_dec_sbox();
-  }
   uint32_t tshift = (48 * (rounds - 1)) % 64;
   uint32_t kshift = (48 * (rounds - 1)) % 56;
   tweak = (tweak >> (64 - tshift)) | (tweak << tshift);

@@ -4,7 +4,11 @@
    MIL-STD-188-141 and recovers all candidate keys in time proportional to
    2^9 for two rounds, 2^16 for three rounds, 2^33 for four rounds,
    2^49 for five rounds, 2^46 for six rounds, 2^46 for seven rounds, and
-   2^45 for eight rounds.
+   2^45 for eight rounds. Attacks on more than six rounds require certain
+   properties of the plaintext-ciphertext-tuple tweaks. In particular, this
+   means that successful attacks require a couple of thousand tuples that
+   differ in tweak byte five only. The program also performs known-plaintext
+   brute force attacks on up to sixteen rounds of the cipher.
 
    Copyright (C) 2016-2018 Marcus Dansarie <marcus@dansarie.se>
 
@@ -37,42 +41,25 @@
 #include <unistd.h>
 
 #include "sodark.h"
+#include "socracked.h"
 
-/* A plaintext-ciphertext-tweak tuple. */
-typedef struct {
-  uint64_t tw;
-  uint32_t pt;
-  uint32_t ct;
-} tuple_t;
-
-/* A pair of tuples. */
-typedef struct {
-  tuple_t t1;
-  tuple_t t2;
-  uint8_t k3[256];
-  uint16_t num_k3;
-} pair_t;
-
-/* An array of tuple-pairs, with some associated data.
-   Used by functions init_pairs, free_pairs, and add_pair. */
-typedef struct {
-  pair_t *pairs;
-  int allocsize;
-  int allocstep;
-  int num_pairs;
-} pairs_t;
-
-typedef struct {
-  tuple_t *tuples;
-  uint32_t num_tuples;
-  uint32_t nrounds;
-} worker_param_t;
+#ifdef WITH_CUDA
+#include "socracked_cuda.h"
+const bool CUDA_ENABLED = true;
+#else
+const bool CUDA_ENABLED = false;
+#endif
 
 pthread_mutex_t g_next_lock;
 pthread_mutex_t g_write_lock;
 pthread_mutex_t g_threadcount_lock;
+bool g_prof = false;
+bool g_mutexes_initialized = false;
 bool g_exit = false;                      /* Indicates that the worker threads should shut down. */
-uint32_t g_num_threads;                   /* Number of worker threads. */
+uint32_t g_num_cpu_threads;               /* Number of worker threads. */
+uint32_t g_num_threads;
+int g_num_cuda_devices = 0;               /* Number of CUDA devices. */
+uint32_t g_cuda_count = 0;                /* Indicates which CUDA device to use. */
 double *g_thread_speeds;                  /* Individual thread cracking speeds in calls to get_next
                                              per second. */
 struct timeval *g_last_get_next_calls;    /* Used for calculation of thread speeds. */
@@ -102,7 +89,7 @@ static void update_thread_speed(uint32_t threadid) {
 }
 
 /* Gets the status line in the user interface. */
-static void set_status(const char *status) {
+void set_status(const char *status) {
   pthread_mutex_lock(&g_write_lock);
   memset(g_status, ' ', STATUS_BUF_LEN - 1);
   for (int i = 0; i < strlen(status) && i < STATUS_BUF_LEN - 1; i++) {
@@ -137,10 +124,9 @@ static bool get_next(uint32_t threadid, uint32_t *next) {
   return true;
 }
 
-/* Returns the next work unit in the case of cracking 6, 7, or 8 rounds.
-   Returns false to indicate that there are no more work units available and
-   that the thread should stop. */
-static bool get_next_678(uint32_t threadid, uint32_t *k12, pair_t **pair) {
+/* Returns the next work unit when cracking 6, 7, or 8 rounds. Returns false to indicate that there
+   are no more work units available and that the thread should stop. */
+bool get_next_678(uint32_t threadid, uint32_t *k12, pair_t **pair) {
   update_thread_speed(threadid);
   pthread_mutex_lock(&g_next_lock);
   if (g_next_pair >= g_pairs.num_pairs) {
@@ -151,9 +137,12 @@ static bool get_next_678(uint32_t threadid, uint32_t *k12, pair_t **pair) {
   *k12 = g_next;
   *pair = &g_pairs.pairs[g_next_pair];
   g_next += 1;
-  if (g_next == 0x10000) {
+  if (!g_prof && g_next == 0x10000) {
     g_next = 0;
     g_next_pair += 1;
+  }
+  if (g_prof && g_next > 0xc228) {
+    g_next_pair = g_pairs.num_pairs;
   }
   g_current_pair = **pair;
   pthread_mutex_unlock(&g_next_lock);
@@ -162,7 +151,7 @@ static bool get_next_678(uint32_t threadid, uint32_t *k12, pair_t **pair) {
 
 /* Tests a candidate key against all known tuples. Returns true if the key is
    a match for all of them. */
-static inline bool test_key(uint32_t rounds, uint64_t key, tuple_t *tuples, uint32_t num_tuples) {
+bool test_key(uint32_t rounds, uint64_t key, tuple_t *tuples, uint32_t num_tuples) {
   for (uint32_t i = 0; i < num_tuples; i++) {
     if (encrypt_sodark_3(rounds, tuples[i].pt, key, tuples[i].tw) != tuples[i].ct) {
       return false;
@@ -173,9 +162,10 @@ static inline bool test_key(uint32_t rounds, uint64_t key, tuple_t *tuples, uint
 
 /* Called by a cracking thread to write a found key to file and to update the
    number of keys found.*/
-static void found_key(uint64_t key) {
+void found_key(uint64_t key) {
   pthread_mutex_lock(&g_write_lock);
   fprintf(g_outfp, "%014" PRIx64 "\n", key);
+  fflush(g_outfp);
   g_keysfound += 1;
   g_last_key_found = key;
   pthread_mutex_unlock(&g_write_lock);
@@ -572,6 +562,9 @@ void *crack5(void *p) {
 
   uint32_t k13;
   while (get_next(threadid, &k13)) {
+    if (g_prof && k13 != 0xc24a) {
+      goto exit5;
+    }
     const uint8_t k1 = k13 >> 8;
     const uint8_t k3 = k13 & 0xff;
     for (uint32_t k456 = 0; k456 < 0x1000000; k456++) {
@@ -655,7 +648,10 @@ void *crack678(void *p) {
   pthread_mutex_unlock(&g_threadcount_lock);
 
   if (g_exit) {
-    goto exit678;
+    pthread_mutex_lock(&g_threadcount_lock);
+    g_threadcount -= 1;
+    pthread_mutex_unlock(&g_threadcount_lock);
+    return NULL;
   }
 
   uint32_t k12;
@@ -734,6 +730,46 @@ exit678:
   return NULL;
 }
 
+#ifdef WITH_CUDA
+void *cuda_crack(void *p, bool brute) {
+  worker_param_t params = *((worker_param_t*)p);
+  assert(params.num_tuples > 1);
+  assert(params.nrounds > 5 && params.nrounds <= 16);
+
+  pthread_mutex_lock(&g_threadcount_lock);
+  uint32_t threadid = g_threadcount++;
+  uint32_t cuda_device = g_cuda_count++ % g_num_cuda_devices;
+  pthread_mutex_unlock(&g_threadcount_lock);
+
+  if (g_exit) {
+    pthread_mutex_lock(&g_threadcount_lock);
+    g_threadcount -= 1;
+    pthread_mutex_unlock(&g_threadcount_lock);
+    return NULL;
+  }
+
+  if (brute) {
+    cuda_brute(params, threadid, cuda_device, params.nrounds);
+  } else {
+    cuda_fast(params, threadid, cuda_device);
+  }
+
+  pthread_mutex_lock(&g_threadcount_lock);
+  g_threadcount -= 1;
+  pthread_mutex_unlock(&g_threadcount_lock);
+
+  return NULL;
+}
+
+void *cuda_crack_brute(void *p) {
+  return cuda_crack(p, true);
+}
+
+void *cuda_crack_fast(void *p) {
+  return cuda_crack(p, false);
+}
+#endif /* WITH_CUDA */
+
 /* Initializes a list of tuple-pairs. */
 static bool init_pairs(pairs_t *pairs) {
   assert(pairs != NULL);
@@ -742,6 +778,7 @@ static bool init_pairs(pairs_t *pairs) {
   pairs->pairs = malloc(sizeof(pair_t) * pairs->allocsize);
   if (pairs->pairs == NULL) {
     pairs->allocsize = 0;
+    endwin();
     fprintf(stderr, "Memory allocation error on line %d.\n", __LINE__);
     return false;
   }
@@ -770,11 +807,24 @@ static bool add_pair(pairs_t *pairs, pair_t p) {
     pairs->allocsize += pairs->allocstep;
     pairs->pairs = realloc(pairs->pairs, sizeof(pair_t) * pairs->allocsize);
     if (pairs->pairs == NULL) {
+      endwin();
       fprintf(stderr, "Memory allocation error on line %d.\n", __LINE__);
       return false;
     }
   }
   return true;
+}
+
+void get_elapsed_time(struct timeval start_time, struct timeval time_now,
+    int *days, int *hours, int *minutes, int *seconds) {
+  int elapsed = time_now.tv_sec - start_time.tv_sec;
+  *days = elapsed / 86400;
+  elapsed -= *days * 86400;
+  *hours = elapsed / 3600;
+  elapsed -= *hours * 3600;
+  *minutes = elapsed / 60;
+  elapsed -= *minutes * 60;
+  *seconds = elapsed;
 }
 
 #define PRINT_BACKGROUND_STRING(y, x, maxy, str) \
@@ -795,7 +845,11 @@ static void draw_background(WINDOW *screen) {
   bkgd(COLOR_PAIR(1));
   border(0, 0, 0, 0, 0, 0, 0, 0);
   attrset(COLOR_PAIR(1));
-  PRINT_BACKGROUND_STRING(1,  1,  maxy, "SoCracked v. 1.0");
+  if (CUDA_ENABLED) {
+    PRINT_BACKGROUND_STRING(1,  1,  maxy, "SoCracked v. 1.0 (CUDA)");
+  } else {
+    PRINT_BACKGROUND_STRING(1,  1,  maxy, "SoCracked v. 1.0");
+  }
   PRINT_BACKGROUND_STRING(3,  1,  maxy, "Start time:");
   PRINT_BACKGROUND_STRING(4,  1,  maxy, "Elapsed time:");
   PRINT_BACKGROUND_STRING(5,  1,  maxy, "Estimated finish:");
@@ -812,6 +866,10 @@ static void draw_background(WINDOW *screen) {
   PRINT_BACKGROUND_STRING(15, 22, maxy, "[");
   PRINT_BACKGROUND_STRING(15, 77, maxy, "]");
   PRINT_BACKGROUND_STRING(17, 1,  maxy, "Status:");
+  PRINT_BACKGROUND_STRING(18, 1,  maxy, "CPU threads:");
+  if (CUDA_ENABLED) {
+    PRINT_BACKGROUND_STRING(19, 1,  maxy, "CUDA devices:");
+  }
   refresh();
 }
 
@@ -821,7 +879,9 @@ static void draw_background(WINDOW *screen) {
    start_time  UTC time that the program was started.
    psuccess    Calculated probability of success, as a percentage (0.0 <= p <= 100.0).
                Values outside this range result in no probability being printed.
-   rounds      Number of rounds cracked. */
+   rounds      Number of rounds cracked.
+   screen      Window reference.
+   qonce       True if Q has already been pressed once. */
 static void draw_foreground(struct timeval start_time, double psuccess, uint32_t rounds,
     WINDOW *screen, bool qonce) {
   assert(screen != NULL);
@@ -848,14 +908,8 @@ static void draw_foreground(struct timeval start_time, double psuccess, uint32_t
   /* Elapsed time */
   struct timeval time_now;
   gettimeofday(&time_now, NULL);
-  int elapsed = time_now.tv_sec - start_time.tv_sec;
-  int days = elapsed / 86400;
-  elapsed -= days * 86400;
-  int hours = elapsed / 3600;
-  elapsed -= hours * 3600;
-  int minutes = elapsed / 60;
-  elapsed -= minutes * 60;
-  int seconds = elapsed;
+  int days, hours, minutes, seconds;
+  get_elapsed_time(start_time, time_now, &days, &hours, &minutes, &seconds);
   mvprintw(4,  22, "%dd %02d:%02d:%02d", days, hours, minutes, seconds);
   RETURN_IF_MAXY(maxy, 5);
 
@@ -863,15 +917,19 @@ static void draw_foreground(struct timeval start_time, double psuccess, uint32_t
   if (g_thread_speeds != NULL) {
     double tspeed = 0.0;
     bool all_valid = true;
+    time_t speed_update_time = 0;
     for (int i = 0; i < g_num_threads; i++) {
       if (g_thread_speeds[i] <= 0.0) {
         all_valid = false;
         break;
       }
       tspeed += g_thread_speeds[i];
+      if (g_last_get_next_calls[i].tv_sec > speed_update_time) {
+        speed_update_time = g_last_get_next_calls[i].tv_sec;
+      }
     }
     if (all_valid) {
-      time_t finish_time = start_time.tv_sec + (0x10000 - g_next) / tspeed;
+      time_t finish_time = speed_update_time + (0x10000 - g_next) / tspeed;
       if (rounds > 5) {
         pthread_mutex_lock(&g_next_lock);
         finish_time += (0x10000 * (g_pairs.num_pairs - g_next_pair - 1)) / tspeed;
@@ -916,45 +974,201 @@ static void draw_foreground(struct timeval start_time, double psuccess, uint32_t
   }
   RETURN_IF_MAXY(maxy, 14);
 
+  const char bar[] = "                                                      ";
   pthread_mutex_lock(&g_next_lock);
-  mvprintw(14, 8,  "%d of %d",
-      rounds > 5 ? (g_next_pair == g_pairs.num_pairs ? g_pairs.num_pairs : g_next_pair + 1)   : 1,
-      rounds > 5 ? g_pairs.num_pairs : 1);
+  uint32_t num_pairs = rounds > 5 ? g_pairs.num_pairs : 1;
+  uint32_t current_pair = rounds > 5 ? g_next_pair : 0;
+  mvprintw(14, 8,  "%d of %-6d", current_pair + 1 > num_pairs ? num_pairs : current_pair + 1,
+      num_pairs);
+  int bars = 0;
+  if (num_pairs > 0) {
+    bars = strlen(bar) * current_pair / num_pairs;
+  }
+  mvprintw(14, 23, "%s", bar);
+  attrset(COLOR_PAIR(3));
+  mvprintw(14, 23, "%s", bar + strlen(bar) - bars);
+  attrset(COLOR_PAIR(2));
   pthread_mutex_unlock(&g_next_lock);
   RETURN_IF_MAXY(maxy, 15);
 
   pthread_mutex_lock(&g_next_lock);
-  const char bar[] = "                                                      ";
   double pct = g_next * 100.0 / (0xffff - 1);
   double pct_per_bar = 100.0 / strlen(bar);
-  int bars = (int)(pct / pct_per_bar);
+  bars = (int)(pct / pct_per_bar);
   pthread_mutex_unlock(&g_next_lock);
   mvprintw(15, 8,  "%.1f%%   ", pct); /* Key percentage. */
   mvprintw(15, 23, "%s", bar);
   attrset(COLOR_PAIR(3));
   mvprintw(15, 23, "%s", bar + strlen(bar) - bars);
+  attrset(COLOR_PAIR(2));
   RETURN_IF_MAXY(maxy, 17);
 
-  attrset(COLOR_PAIR(2));
   char status[STATUS_BUF_LEN];
   get_status(status);
   mvprintw(17, 22, "%s", status);
+  mvprintw(18, 22, "%d", g_num_cpu_threads);
+  if (CUDA_ENABLED) {
+    mvprintw(19, 22, "%d", g_num_cuda_devices);
+  }
   refresh();
+}
+
+void cleanup_globals() {
+  if (g_outfp != NULL) {
+    fclose(g_outfp);
+    g_outfp = NULL;
+  }
+  if (g_pairs.pairs != NULL) {
+    free_pairs(&g_pairs);
+  }
+  free(g_thread_speeds);
+  free(g_last_get_next_calls);
+  g_thread_speeds = NULL;
+  g_last_get_next_calls = NULL;
+  if (g_mutexes_initialized) {
+    pthread_mutex_destroy(&g_next_lock);
+    pthread_mutex_destroy(&g_write_lock);
+    pthread_mutex_destroy(&g_threadcount_lock);
+    g_mutexes_initialized = false;
+  }
+}
+
+bool start_threads(void *(*crack_func)(void*), void *(*cuda_crack_func)(void*),
+    worker_param_t worker_params) {
+
+  if (g_prof && worker_params.nrounds == 5) {
+    g_next = 0xc24a;
+  } else if (g_prof && worker_params.nrounds > 5) {
+    g_next = 0xc228;
+  } else {
+    g_next = 0;
+  }
+  g_next_pair = 0;
+  memset(g_thread_speeds, 0, sizeof(double) * g_num_threads);
+  memset(g_last_get_next_calls, 0, sizeof(struct timeval) * g_num_threads);
+  /* Ensure the started threads wait until all threads have been created. */
+  pthread_mutex_lock(&g_threadcount_lock);
+
+  pthread_t thread_id[g_num_cpu_threads];
+  pthread_t cuda_thread_id[g_num_cuda_devices];
+  memset(thread_id, 0, sizeof(pthread_t) * g_num_cpu_threads);
+  memset(cuda_thread_id, 0, sizeof(pthread_t) * g_num_cuda_devices);
+  cpu_set_t cpus;
+  pthread_attr_t attr;
+  pthread_attr_init(&attr);
+
+  /* Start CPU threads. */
+  if (crack_func != NULL) {
+
+    for (uint32_t i = 0; i < g_num_cpu_threads; i++) {
+      CPU_ZERO(&cpus);
+      CPU_SET(i, &cpus);
+      pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &cpus);
+      if (pthread_create(&(thread_id[i]), &attr, crack_func, &worker_params) != 0) {
+        g_exit = true;
+        pthread_mutex_unlock(&g_threadcount_lock);
+        endwin();
+        fprintf(stderr, "Error returned from pthread_create. i=%d. g_num_cpu_threads=%d. "
+            "line=%d.\n", i, g_num_cpu_threads, __LINE__);
+        for (int k = 0; k < i; k++) {
+          pthread_join(thread_id[k], NULL);
+        }
+      }
+    }
+  }
+
+  if (cuda_crack_func != NULL) {
+    uint32_t num_processors = sysconf(_SC_NPROCESSORS_ONLN);
+    for (uint32_t i = 0; i < g_num_cuda_devices; i++) {
+      CPU_ZERO(&cpus);
+      CPU_SET((i % num_processors), &cpus);
+      pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &cpus);
+      if (pthread_create(&(cuda_thread_id[i]), &attr, cuda_crack_func, &worker_params) != 0) {
+        g_exit = true;
+        pthread_mutex_unlock(&g_threadcount_lock);
+        endwin();
+        fprintf(stderr, "Error returned from pthread_create. i=%d. g_num_cpu_threads=%d. "
+            "line=%d.\n", i, g_num_cpu_threads, __LINE__);
+        for (int k = 0; k < g_num_cpu_threads; k++) {
+          pthread_join(thread_id[k], NULL);
+        }
+        for (int k = 0; k < i; k++) {
+          pthread_join(cuda_thread_id[k], NULL);
+        }
+        return false;
+      }
+    }
+  }
+
+  pthread_attr_destroy(&attr);
+  pthread_mutex_unlock(&g_threadcount_lock);
+  return true;
+}
+
+bool run_progress_screen(WINDOW *screen, struct timeval start_time, double psuccess,
+    uint32_t nrounds) {
+
+  uint32_t tcount;
+  uint32_t qcount = 0;
+  bool userquit = false;
+  do {
+    if (qcount > 0) {
+      qcount--;
+    }
+    draw_foreground(start_time, psuccess, nrounds, screen, qcount > 0);
+    usleep(100000);
+
+    pthread_mutex_lock(&g_threadcount_lock);
+    tcount = g_threadcount;
+    pthread_mutex_unlock(&g_threadcount_lock);
+    int keypress;
+    do {
+      keypress = getch();
+      if (keypress == KEY_RESIZE) {
+        draw_background(screen);
+      } else if (keypress == 'q' || keypress == 'Q') {
+        if (qcount > 0) {
+          g_exit = true;
+          set_status("Exiting.");
+          userquit = true;
+        } else {
+          qcount = 20;
+        }
+      }
+    } while (keypress != ERR);
+  } while (tcount > 0);
+
+  return userquit;
 }
 
 int main(int argc, char **argv) {
   create_sodark_dec_sbox();
 
+  /* Sanity tests. */
   assert(enc_one_round_3(0x54e0cd, 0xc2284a ^ 0x543bd8) == 0xd0721d);
   assert(dec_one_round_3(0xd0721d, 0xc2284a ^ 0x543bd8) == 0x54e0cd);
   assert(dec_one_round_3(dec_one_round_3(0xd0721d, 0xc2284a ^ 0x543bd8), 0) == 0x2ac222);
   assert(encrypt_sodark_3(3, 0x54e0cd, 0xc2284a1ce7be2f, 0x543bd88000017550) == 0x41db0c);
   assert(encrypt_sodark_3(4, 0x54e0cd, 0xc2284a1ce7be2f, 0x543bd88000017550) == 0x987c6d);
 
+  #ifdef WITH_CUDA
+  if (argc == 2 && strcmp(argv[1], "-devices") == 0) {
+    list_cuda_devices();
+    return 0;
+  }
+  #endif /* WITH_CUDA */
+
   /* Check if correct number of arguments. */
-  if (argc != 4) {
+  if (argc != 4 && argc != 5) {
     fprintf(stderr, "Usage: %s rounds infile outfile\n\n", argv[0]);
     return 1;
+  } else if (argc == 5) {
+    if (strcmp(argv[4], "-prof") == 0) {
+      g_prof = true;
+    } else {
+      fprintf(stderr, "Usage: %s rounds infile outfile\n\n", argv[0]);
+      return 1;
+    }
   }
 
   worker_param_t worker_params;
@@ -962,8 +1176,12 @@ int main(int argc, char **argv) {
 
   /* Check if the number of rounds is supported. */
   worker_params.nrounds = atoi(argv[1]);
-  if (worker_params.nrounds < 2 || worker_params.nrounds > 8) {
-    fprintf(stderr, "Bad number of rounds. Only 2 - 8 rounds are supported.\n");
+  int max_rounds = 8;
+  if (CUDA_ENABLED) {
+    max_rounds = 16;
+  }
+  if (worker_params.nrounds < 2 || worker_params.nrounds > max_rounds) {
+    fprintf(stderr, "Bad number of rounds. Only 2 - %d rounds are supported.\n", max_rounds);
     return 1;
   }
 
@@ -995,7 +1213,7 @@ int main(int argc, char **argv) {
     if (screen == NULL) {
       fprintf(stderr, "Error when initializing curses.\n");
       fclose(infp);
-      fclose(g_outfp);
+      cleanup_globals();
       return 1;
     }
     cbreak();
@@ -1008,10 +1226,9 @@ int main(int argc, char **argv) {
       init_pair(3, COLOR_GREEN, COLOR_GREEN);
     }
     curs_set(0);
+    set_status("Reading input file. ");
     draw_background(screen);
     draw_foreground(start_time, psuccess, worker_params.nrounds, screen, false);
-    set_status("Reading input file... ");
-    fflush(stdout);
   }
 
   /* Allocate memory for input tuples. */
@@ -1022,8 +1239,8 @@ int main(int argc, char **argv) {
   if (worker_params.tuples == NULL) {
     endwin();
     fprintf(stderr, "Memory allocation error on line %d.\n", __LINE__);
-    fclose(g_outfp);
     fclose(infp);
+    cleanup_globals();
     return 1;
   }
 
@@ -1040,8 +1257,8 @@ int main(int argc, char **argv) {
         if (worker_params.tuples == NULL) {
           endwin();
           fprintf(stderr, "Memory allocation error on line %d.\n", __LINE__);
-          fclose(g_outfp);
           fclose(infp);
+          cleanup_globals();
           return 1;
         }
       }
@@ -1055,18 +1272,38 @@ int main(int argc, char **argv) {
   fclose(infp);
   infp = NULL;
 
-  /* Perform filtering step when cracking more than 5 rounds. */
-  if (worker_params.nrounds > 5) {
-    set_status("Filtering pairs... ");
-    fflush(stdout);
+  /* Ensure first two pairs are unique. */
+  while (worker_params.num_tuples > 1
+      && worker_params.tuples[0].pt == worker_params.tuples[1].pt
+      && worker_params.tuples[0].ct == worker_params.tuples[1].ct
+      && worker_params.tuples[0].tw == worker_params.tuples[1].tw) {
+    for (int i = 2; i < worker_params.num_tuples; i++) {
+      worker_params.tuples[i - 1] = worker_params.tuples[i];
+    }
+    worker_params.num_tuples -= 1;
+  }
+  g_current_pair.t1 = worker_params.tuples[0];
+  g_current_pair.t2 = worker_params.tuples[1];
+
+  if (worker_params.num_tuples < 2) {
+    endwin();
+    free(worker_params.tuples);
+    cleanup_globals();
+    printf("At least two valid tuples are required.\n");
+    return 1;
+  }
 
     if (!init_pairs(&g_pairs)) {
       /* init_pairs has printed an error message. */
-      endwin();
       free(worker_params.tuples);
-      fclose(g_outfp);
+      cleanup_globals();
       return 1;
     }
+
+  /* Perform filtering step when cracking 5-8 rounds. */
+  if (worker_params.nrounds > 5 && worker_params.nrounds <= 8) {
+    set_status("Filtering pairs. ");
+    draw_foreground(start_time, psuccess, worker_params.nrounds, screen, false);
 
     pair_t pair;
     for (uint16_t i = 0; i < 0x100; i++) {
@@ -1074,27 +1311,30 @@ int main(int argc, char **argv) {
     }
     pair.num_k3 = 0x100;
 
+    /* Generate all possible pairs. */
     for (int i = 0; i < worker_params.num_tuples; i++) {
       for (int k = i + 1; k < worker_params.num_tuples; k++) {
+        /* Eliminate pairs that don't have the necessary tweak difference. */
         uint64_t delta_tw = worker_params.tuples[i].tw ^ worker_params.tuples[k].tw;
         if (delta_tw & 0xffffffff00ffffffL || ((delta_tw >> 24) & 0xff) == 0) {
           continue;
         }
+
         uint8_t a1 =  worker_params.tuples[i].ct >> 16;
         uint8_t a2 =  worker_params.tuples[k].ct >> 16;
         uint8_t b1 = (worker_params.tuples[i].ct >> 8) & 0xff;
         uint8_t b2 = (worker_params.tuples[k].ct >> 8) & 0xff;
         uint8_t c1 =  worker_params.tuples[i].ct & 0xff;
         uint8_t c2 =  worker_params.tuples[k].ct & 0xff;
+
         if (worker_params.nrounds == 6) {
           if (worker_params.tuples[i].ct == worker_params.tuples[k].ct) {
             pair.t1 = worker_params.tuples[i];
             pair.t2 = worker_params.tuples[k];
             if (!add_pair(&g_pairs, pair)) {
               /* add_pair has printed an error message. */
-              endwin();
               free(worker_params.tuples);
-              fclose(g_outfp);
+              cleanup_globals();
               return 1;
             }
           }
@@ -1108,14 +1348,13 @@ int main(int argc, char **argv) {
               pair.t2 = worker_params.tuples[k];
               if (!add_pair(&g_pairs, pair)) {
                 /* add_pair has printed an error message. */
-                endwin();
                 free(worker_params.tuples);
-                fclose(g_outfp);
+                cleanup_globals();
                 return 1;
               }
             }
           }
-        } else {
+        } else if (worker_params.nrounds == 8) {
           if ((g_sbox_dec[a1] ^ g_sbox_dec[a2]) == (g_sbox_dec[c1] ^ g_sbox_dec[c2])
               && (g_sbox_dec[a1] ^ g_sbox_dec[a2])
                   == (g_sbox_dec[b1] ^ g_sbox_dec[b2] ^ a1 ^ a2 ^ c1 ^ c2)) {
@@ -1137,73 +1376,33 @@ int main(int argc, char **argv) {
             }
             if (!add_pair(&g_pairs, pair)) {
               /* add_pair has printed an error message. */
-              endwin();
               free(worker_params.tuples);
-              fclose(g_outfp);
+              cleanup_globals();
               return 1;
             }
           }
+        } else {
+          assert(0);
         }
       }
     }
-
-    /* Check if any viable pairs were found. */
-    if (g_pairs.num_pairs == 0) {
-      endwin();
-      free(worker_params.tuples);
-      free_pairs(&g_pairs);
-      fclose(g_outfp);
-      fprintf(stderr, "No candidate pairs found.\n");
-      return 0;
-    }
-    if (worker_params.nrounds != 8) {
-      /* Only one pair needed. Using first pair. */
-      g_pairs.num_pairs = 1;
-    }
   } /* worker_params.nrounds > 5 */
 
-  if (worker_params.nrounds < 6) {
-    /* Ensure first two pairs are unique. */
-    while (worker_params.num_tuples > 1
-        && worker_params.tuples[0].pt == worker_params.tuples[1].pt
-        && worker_params.tuples[0].ct == worker_params.tuples[1].ct
-        && worker_params.tuples[0].tw == worker_params.tuples[1].tw) {
-      for (int i = 2; i < worker_params.num_tuples; i++) {
-        worker_params.tuples[i - 1] = worker_params.tuples[i];
-      }
-      worker_params.num_tuples -= 1;
-    }
-    g_current_pair.t1 = worker_params.tuples[0];
-    g_current_pair.t2 = worker_params.tuples[1];
-  }
-
-  if (worker_params.nrounds < 6 && worker_params.num_tuples < 2) {
-    endwin();
-    free(worker_params.tuples);
-    fclose(g_outfp);
-    fprintf(stderr, "Error: At least two valid tuples are required.\n");
-    return 1;
-  }
-
-  /* Calculate success probability. */
-  if (worker_params.nrounds < 8) {
-    psuccess = 100.0;
-  } else {
-    psuccess = 100.0 * (1.0 - pow(0.99, g_pairs.num_pairs));
-  }
+  psuccess = 100.0;
 
   /* Select cracking function. */
   void *(*crack_func)(void*) = NULL;
+  void *(*cuda_crack_func)(void*) = NULL;
   switch (worker_params.nrounds) {
     case 2:
       crack2(worker_params.tuples, worker_params.num_tuples);
       free(worker_params.tuples);
-      fclose(g_outfp);
+      cleanup_globals();
       return 0;
     case 3:
       crack3(worker_params.tuples, worker_params.num_tuples);
       free(worker_params.tuples);
-      fclose(g_outfp);
+      cleanup_globals();
       return 0;
     case 4:
       crack_func = crack4;
@@ -1213,12 +1412,85 @@ int main(int argc, char **argv) {
       break;
     case 6:
     case 7:
+      if (g_pairs.num_pairs == 0) {
+        if (CUDA_ENABLED) {
+          pair_t pa;
+          for (uint16_t i = 0; i < 0x100; i++) {
+            pa.k3[i] = i;
+          }
+          pa.num_k3 = 0x100;
+          pa.t1 = worker_params.tuples[0];
+          pa.t2 = worker_params.tuples[1];
+          add_pair(&g_pairs, pa);
+          crack_func = NULL;
+          #ifdef WITH_CUDA
+          cuda_crack_func = cuda_crack_brute;
+          #endif /* WITH_CUDA */
+        } else {
+          endwin();
+          free(worker_params.tuples);
+          cleanup_globals();
+          printf("No candidate pairs found.\n");
+          return 0;
+        }
+      } else {
+        g_pairs.num_pairs = 1;
+        crack_func = crack678;
+        #ifdef WITH_CUDA
+        cuda_crack_func = cuda_crack_fast;
+        #endif /* WITH_CUDA */
+      }
+      break;
     case 8:
-      crack_func = crack678;
+      if (g_pairs.num_pairs == 0) {
+        if (CUDA_ENABLED) {
+          pair_t pa;
+          for (uint16_t i = 0; i < 0x100; i++) {
+            pa.k3[i] = i;
+          }
+          pa.num_k3 = 0x100;
+          pa.t1 = worker_params.tuples[0];
+          pa.t2 = worker_params.tuples[1];
+          add_pair(&g_pairs, pa);
+          crack_func = NULL;
+          #ifdef WITH_CUDA
+          cuda_crack_func = cuda_crack_brute;
+          #endif /* WITH_CUDA */
+        } else {
+          endwin();
+          free(worker_params.tuples);
+          cleanup_globals();
+          printf("No candidate pairs found.\n");
+          return 0;
+        }
+      } else {
+        psuccess = 100.0 * (1.0 - pow(0.989795918, g_pairs.num_pairs));
+        crack_func = crack678;
+        #ifdef WITH_CUDA
+        cuda_crack_func = cuda_crack_fast;
+        #endif /* WITH_CUDA */
+      }
       break;
     default:
-      fprintf(stderr, "Error: %d\n", worker_params.nrounds);
-      assert(0);
+      /* More than eight rounds: brute force only. */
+      if (CUDA_ENABLED) {
+        psuccess = 100.0;
+        pair_t pa;
+        for (uint16_t i = 0; i < 0x100; i++) {
+          pa.k3[i] = i;
+        }
+        pa.num_k3 = 0x100;
+        pa.t1 = worker_params.tuples[0];
+        pa.t2 = worker_params.tuples[1];
+        add_pair(&g_pairs, pa);
+        crack_func = NULL;
+        #ifdef WITH_CUDA
+        cuda_crack_func = cuda_crack_brute;
+        #endif /* WITH_CUDA */
+      } else {
+        fprintf(stderr, "Error: %d\n", worker_params.nrounds);
+        assert(0);
+      }
   }
 
   /* Initialize mutexes. */
@@ -1226,119 +1498,110 @@ int main(int argc, char **argv) {
       || pthread_mutex_init(&g_threadcount_lock, NULL) != 0
       || pthread_mutex_init(&g_write_lock, NULL) != 0) {
     endwin();
-    fclose(g_outfp);
-    free(worker_params.tuples);
-    if (g_pairs.pairs != NULL) {
-      free_pairs(&g_pairs);
-    }
+    cleanup_globals();
     fprintf(stderr, "Mutex init failed.\n");
     return 1;
   }
+  g_mutexes_initialized = true;
 
-  g_num_threads = sysconf(_SC_NPROCESSORS_ONLN);
+  if (CUDA_ENABLED) {
+    #ifdef WITH_CUDA
+    g_num_cuda_devices = get_num_cuda_devices();
+    #endif /* WITH_CUDA */
+    if (g_num_cuda_devices < 0) {
+      endwin();
+      fprintf(stderr, "Error when getting number of CUDA devices.\n");
+      free(worker_params.tuples);
+      cleanup_globals();
+      return 1;
+    }
+    if (g_num_cuda_devices == 0 && worker_params.nrounds > 8) {
+      endwin();
+      fprintf(stderr, "No CUDA devices found. CPU brute force cracking not supported.\n");
+      free(worker_params.tuples);
+      cleanup_globals();
+      return 1;
+    }
+    if (g_prof) {
+        g_num_cuda_devices = g_num_cuda_devices > 0 ? 1 : 0;
+    }
+  } else {
+    g_num_cuda_devices = 0;
+  }
+  g_num_cpu_threads = sysconf(_SC_NPROCESSORS_ONLN);
+
+  if (CUDA_ENABLED && worker_params.nrounds > 5 && g_num_cuda_devices > 0) {
+    /* Use CUDA. */
+    g_num_cpu_threads = 0;
+    g_num_threads = g_num_cuda_devices;
+  } else {
+    /* Use CPU threads. */
+    g_num_cuda_devices = 0;
+    g_num_threads = g_num_cpu_threads;
+  }
+
   g_thread_speeds = malloc(sizeof(double) * g_num_threads);
   g_last_get_next_calls = malloc(sizeof(struct timeval) * g_num_threads);
   if (g_thread_speeds == NULL || g_last_get_next_calls == NULL) {
     endwin();
     fprintf(stderr, "Malloc failed on line %d.\n", __LINE__);
-    fclose(g_outfp);
     free(worker_params.tuples);
-    if (g_pairs.pairs != NULL) {
-      free_pairs(&g_pairs);
-    }
-    free(g_thread_speeds);
-    free(g_last_get_next_calls);
-    pthread_mutex_destroy(&g_next_lock);
-    pthread_mutex_destroy(&g_threadcount_lock);
-    pthread_mutex_destroy(&g_write_lock);
+    cleanup_globals();
     return 1;
   }
-  memset(g_thread_speeds, 0, sizeof(double) * g_num_threads);
-  memset(g_last_get_next_calls, 0, sizeof(double) * g_num_threads);
 
-  pthread_t thread_id[g_num_threads];
-  cpu_set_t cpus;
-  pthread_attr_t attr;
-  pthread_attr_init(&attr);
-  /* Ensure the started threads wait until all threads have been created. */
-  pthread_mutex_lock(&g_threadcount_lock);
-  /* Create one thread per processor. */
-  for (uint32_t i = 0; i < g_num_threads; i++) {
-    CPU_ZERO(&cpus);
-    CPU_SET(i, &cpus);
-    pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &cpus);
-    if (pthread_create(&(thread_id[i]), &attr, crack_func, &worker_params) != 0) {
-      g_exit = true;
-      pthread_mutex_unlock(&g_threadcount_lock);
-      endwin();
-      fprintf(stderr, "Error returned from pthread_create. i=%d. g_num_threads=%d\n",
-          i, g_num_threads);
-      fclose(g_outfp);
-      free(worker_params.tuples);
-      if (g_pairs.pairs != NULL) {
-        free_pairs(&g_pairs);
-      }
-      free(g_thread_speeds);
-      free(g_last_get_next_calls);
-      pthread_attr_destroy(&attr);
-      pthread_mutex_destroy(&g_next_lock);
-      pthread_mutex_destroy(&g_write_lock);
-      pthread_mutex_destroy(&g_threadcount_lock);
-      return 1;
-    }
+  if (start_threads(crack_func, cuda_crack_func, worker_params) != true) {
+    free(worker_params.tuples);
+    cleanup_globals();
+    return 1;
   }
-  pthread_mutex_unlock(&g_threadcount_lock);
-  pthread_attr_destroy(&attr);
 
   /* Wait for completion and keep screen updated. */
+  #ifdef WITH_CUDA
+  if (cuda_crack_func == cuda_crack_brute) {
+    set_status("Performing brute force key search.");
+  } else {
+    set_status("Performing key search.");
+  }
+  #else /* WITH_CUDA */
   set_status("Performing key search.");
-  uint32_t tcount;
-  uint32_t qcount = 0;
-  do {
-    if (qcount > 0) {
-      qcount--;
-    }
-    draw_foreground(start_time, psuccess, worker_params.nrounds, screen, qcount > 0);
-    usleep(100000);
+  #endif /* WITH_CUDA */
 
-    pthread_mutex_lock(&g_threadcount_lock);
-    tcount = g_threadcount;
-    pthread_mutex_unlock(&g_threadcount_lock);
-    int keypress;
-    do {
-      keypress = getch();
-      if (keypress == KEY_RESIZE) {
-        draw_background(screen);
-      } else if (keypress == 'q' || keypress == 'Q') {
-        if (qcount > 0) {
-          g_exit = true;
-          set_status("Exiting...");
-        } else {
-          qcount = 20;
-        }
-      }
-    } while (keypress != ERR);
-  } while (tcount > 0);
+  bool userquit = run_progress_screen(screen, start_time, psuccess, worker_params.nrounds);
+
+  #ifdef WITH_CUDA
+  if (!userquit && worker_params.nrounds == 8 && get_keys_found() == 0
+      && cuda_crack_func != cuda_crack_brute && g_num_cuda_devices > 0) {
+    set_status("Performing brute force key search.");
+    g_pairs.num_pairs = 1;
+
+    if (start_threads(NULL, cuda_crack_brute, worker_params) != true) {
+      free(worker_params.tuples);
+      cleanup_globals();
+      return 1;
+    }
+    run_progress_screen(screen, start_time, 100.0, worker_params.nrounds);
+  }
+  #endif /* WITH_CUDA */
 
   endwin();
   uint64_t keysfound = get_keys_found();
+  struct timeval time_now;
+  gettimeofday(&time_now, NULL);
+  int days, hours, minutes, seconds;
+  get_elapsed_time(start_time, time_now, &days, &hours, &minutes, &seconds);
+  char timestr[50];
+  snprintf(timestr, 50, "%dd %02d:%02d:%02d", days, hours, minutes, seconds);
+  timestr[49] = '\0';
   if (keysfound == 0) {
-    printf("No keys found.\n");
+    printf("No keys found in %s.\n", timestr);
   } else if (keysfound == 1) {
-    printf("1 key found.\n");
+    printf("1 key found in %s.\n", timestr);
   } else {
-    printf("%" PRIu64 " keys found.\n", keysfound);
+    printf("%" PRIu64 " keys found in %s.\n", keysfound, timestr);
   }
-  pthread_mutex_destroy(&g_next_lock);
-  pthread_mutex_destroy(&g_threadcount_lock);
-  pthread_mutex_destroy(&g_write_lock);
-  fclose(g_outfp);
   free(worker_params.tuples);
-  if (g_pairs.pairs != NULL) {
-    free_pairs(&g_pairs);
-  }
-  free(g_thread_speeds);
-  free(g_last_get_next_calls);
+  cleanup_globals();
 
   return 0;
 }
