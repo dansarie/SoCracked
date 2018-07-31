@@ -10,6 +10,9 @@ plaintext-ciphertext-tweak tuples. Attacks on six, seven, and eight rounds
 require tuples with tweaks that are identical in all but the fifth tweak byte.
 For an in-depth description of the techniques used, see
 [Cryptanalysis of the SoDark family of cipher algorithms](https://doi.org/10945/56118).
+The attacks on six, seven, and eight rounds have been implemented in CUDA as
+well as in C. Brute force attacks on up to sixteen rounds have also been
+implemented in CUDA.
 
 In addition to the attacks described above, the programs `lattice2dimacs` and
 `dimacs2key` generate SAT problem instances from sets of
@@ -20,12 +23,13 @@ SAT solver used.
 ## Dependencies
 
 * [CMake](https://cmake.org/) (build system)
+* CUDA (optional, enables brute force cracking)
 * [msgpack](https://github.com/msgpack/msgpack-c) (for generating SAT solver
   instances with `lattice2dimacs`)
 
 ## Build
 
-```console
+```
 sudo apt-get install libmsgpack-dev
 git submodule init
 git submodule update
@@ -34,6 +38,12 @@ cd build
 cmake ..
 make
 make install
+```
+
+## Test
+
+```
+./test-socracked.sh
 ```
 
 ## Run
@@ -53,7 +63,7 @@ f32f5f ceb446 543bd88000017550
 ```
 The following will perform a key recovery attack on four rounds using the test
 vectors from the standard and output the matching keys to `keys.txt`:
-```console
+```
 ./socracked 4 test/test4.txt keys.txt
 ```
 
@@ -61,7 +71,7 @@ vectors from the standard and output the matching keys to `keys.txt`:
 
 The `sodark` utility can be used to perform encryption and decryption with any
 number of rounds. For example:
-```console
+```
 ./sodark -3e 4 54e0cd c2284a1ce7be2f 543bd88000017550
 ```
 
@@ -69,7 +79,7 @@ It can also be used to generate random plaintexts for testing. The following
 will generate 100 plaintext-ciphertext-tweak tuples with the common key
 `c2284a1ce7be2f` and tweak `543bd88000017550`.
 
-```console
+```
 ./sodark -r 3 7 c2284a1ce7be2f 543bd88000017550 100
 ```
 
@@ -81,7 +91,7 @@ convert the plaintext-ciphertext-tweak tuples in
 [test/test3.txt](test/test3.txt) to a SAT problem instance in DIMACS format,
 pipe the output to a SAT solver and print the found keys to the console:
 
-```console
+```
 ./lattice2dimacs 3 3 sbox-cnf/8-366-3219-65213470-9db07eac.cnf test/test3.txt | sat_solver | ./dimacs2key
 ```
 
