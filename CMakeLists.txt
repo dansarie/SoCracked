@@ -1,6 +1,6 @@
 # CMakeLists.txt
 #
-# Copyright (C) 2018 Marcus Dansarie <marcus@dansarie.se>
+# Copyright (C) 2018-2019 Marcus Dansarie <marcus@dansarie.se>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -17,23 +17,23 @@
 
 cmake_minimum_required (VERSION 3.10)
 
-project(SoCracked VERSION 1.0.0 LANGUAGES C CXX)
+project(SoCracked VERSION 1.0.0 LANGUAGES C)
 
 option(ENABLE_CUDA "Compile with CUDA support." ON)
 
 find_package(Curses REQUIRED)
 find_package(Threads REQUIRED)
 if (ENABLE_CUDA)
-  find_package(CUDA)
+  enable_language(CUDA)
 endif (ENABLE_CUDA)
 
-if (ENABLE_CUDA AND CUDA_VERSION)
-  set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} --gpu-architecture=sm_61  --restrict --generate-line-info --ptxas-options=-v,--warn-on-spills,--warn-on-local-memory-usage")
-  cuda_add_executable(socracked socracked.c socracked.cu)
+if (ENABLE_CUDA AND CMAKE_CUDA_COMPILER)
+  set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --gpu-architecture=sm_61  --restrict --generate-line-info --ptxas-options=-v,--warn-on-spills,--warn-on-local-memory-usage")
+  add_executable(socracked socracked.c socracked.cu)
   add_definitions(-DWITH_CUDA)
-else (ENABLE_CUDA AND CUDA_VERSION)
+else (ENABLE_CUDA AND CMAKE_CUDA_COMPILER)
   add_executable(socracked socracked.c)
-endif (ENABLE_CUDA AND CUDA_VERSION)
+endif (ENABLE_CUDA AND CMAKE_CUDA_COMPILER)
 add_executable(sodark sodark.c)
 add_executable(lattice2dimacs lattice2dimacs.c sboxgates/state.c)
 add_executable(dimacs2key dimacs2key.c)
@@ -41,6 +41,6 @@ add_executable(dimacs2key dimacs2key.c)
 target_link_libraries(socracked ${CMAKE_THREAD_LIBS_INIT} ${CURSES_LIBRARIES} m)
 target_link_libraries(lattice2dimacs  "-lmsgpackc")
 
-set(CMAKE_C_FLAGS "-march=native -Ofast -g -Wpedantic")
+set(CMAKE_C_FLAGS "-march=native -Ofast -g -Wall -Wpedantic")
 
 install(TARGETS socracked sodark lattice2dimacs dimacs2key DESTINATION bin)
