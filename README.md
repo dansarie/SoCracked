@@ -42,10 +42,12 @@ make
 make install
 ```
 
+The arguments `-DENABLE_CUDA=ON` and `-DENABLE_CUDA=OFF` can be used with cmake to turn CUDA support on or off manually.
+
 ## Test
 
 ```
-./test-socracked.sh
+../test-socracked.sh
 ```
 
 ## Run
@@ -83,6 +85,29 @@ will generate 100 plaintext-ciphertext-tweak tuples with the common key
 
 ```
 ./sodark -r 3 7 c2284a1ce7be2f 543bd88000017550 100
+```
+
+### Chosen-ciphertext attack
+
+SoCracked can perform chosen-ciphertext attacks on eight rounds.
+Chosen-ciphertext input to SoCracked has seven columns: plaintext 1,
+ciphertext 1, tweak 1, plaintext 2, ciphertext 2, tweak 2, and the value of key
+byte `k3`. For example:
+```
+2b40bf f1c485 c2edcba49aa69513 a0411b a62f81 c2edcba41ba69513 00
+b3ad64 f1ad85 c2edcba49aa69513 204048 a60a81 c2edcba41ba69513 01
+45822e f1ed85 c2edcba49aa69513 738b42 a67181 c2edcba41ba69513 02
+115cf4 f1b085 c2edcba49aa69513 a6df4d a67381 c2edcba41ba69513 03
+ec8f3c f13885 c2edcba49aa69513 60279e a68481 c2edcba41ba69513 04
+85ab8b f1d085 c2edcba49aa69513 1d6207 a6a981 c2edcba41ba69513 05
+```
+The argument `-c` to the `sodark` utility can be used to generate 256
+chosen-ciphertext pairs for a specific key.
+
+To launch a chosen-ciphertext attack, SoCracked is called with `-c` instead of
+the number of rounds:
+```
+./socracked -c chosen.txt keys.txt
 ```
 
 ### SAT problem instance generation

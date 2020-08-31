@@ -1,6 +1,6 @@
 /* socracked.h
 
-   Copyright (C) 2018 Marcus Dansarie <marcus@dansarie.se>
+   Copyright (C) 2018, 2020 Marcus Dansarie <marcus@dansarie.se>
 
    This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -18,6 +18,8 @@
 #ifndef __SOCKRACKED_H__
 #define __SOCKRACKED_H__
 #include <stdint.h>
+
+#define CHOSEN_CIPHERTEXT (0xffffffff)
 
 #ifdef __cplusplus
 extern "C" {
@@ -53,6 +55,8 @@ extern "C" {
     tuple_t *tuples;
     uint32_t num_tuples;
     uint32_t nrounds;
+    int allocsize;
+    int allocstep;
   } worker_param_t;
 
   /* Returns the next work unit when cracking 6, 7, or 8 rounds. Returns false to indicate that

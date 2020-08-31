@@ -36,6 +36,8 @@ void printusage(const char *name) {
   fprintf(stderr, "          Generate ntuples random tuples with random tweaks.\n");
   fprintf(stderr, "%s -r {3|6} rounds key ntuples tweak\n", name);
   fprintf(stderr, "          Generate ntuples random tuples with a specific tweak.\n");
+  fprintf(stderr, "%s -c key\n", name);
+  fprintf(stderr, "          Generate chosen ciphertexts.\n");
 }
 
 int get_random(FILE *rand, uint64_t *ptr) {
@@ -43,6 +45,59 @@ int get_random(FILE *rand, uint64_t *ptr) {
     fprintf(stderr, "Error when reading from /dev/urandom.\n");
     fclose(rand);
     return 1;
+  }
+  return 0;
+}
+
+int generate_chosen_ciphertexts(const char *progname, const char *keystr) {
+  uint64_t key = strtoull(keystr, NULL, 16);
+  key &= 0xffffffffffffffULL;
+  fprintf(stderr, "Key:    %014" PRIx64 "\n", key);
+
+  FILE *randp = fopen("/dev/urandom", "r");
+  if (randp == NULL) {
+    fprintf(stderr, "Error when opening /dev/urandom.\n");
+    return 1;
+  }
+
+  uint64_t rand = 0;
+  while ((rand & 0xff) == 0) {
+    if (get_random(randp, &rand)) {
+      return 1;
+    }
+  }
+  uint8_t ds5 = rand & 0xff;
+  rand >>= 8;
+  uint8_t b7a = rand & 0xff;
+  rand >>= 8;
+  uint8_t b7b = b7a ^ ds5;
+  b7a = g_sbox_enc[b7a];
+  b7b = g_sbox_enc[b7b];
+  uint8_t db7 = b7a ^ b7b;
+  uint8_t a8a = rand & 0xff;
+  rand >>= 8;
+  uint8_t c8a = rand & 0xff;
+  rand >>= 8;
+  uint8_t a8b = a8a ^ db7;
+  uint8_t c8b = c8a ^ db7;
+  a8a = g_sbox_enc[a8a];
+  a8b = g_sbox_enc[a8b];
+  c8a = g_sbox_enc[c8a];
+  c8b = g_sbox_enc[c8b];
+  uint64_t tweak1 = 0;
+  if (get_random(randp, &tweak1)) {
+    return 1;
+  }
+  uint64_t tweak2 = tweak1 ^ (((uint64_t)ds5) << 24);
+  for (int k3 = 0; k3 < 0x100; k3++) {
+    uint8_t b8a = g_sbox_enc[b7a ^ a8a ^ c8a ^ k3 ^ (tweak1 & 0xff)];
+    uint8_t b8b = g_sbox_enc[b7b ^ a8b ^ c8b ^ k3 ^ (tweak2 & 0xff)];
+    uint32_t ct1 = (((uint32_t)a8a) << 16) | (((uint32_t)b8a) << 8) | ((uint32_t)c8a);
+    uint32_t ct2 = (((uint32_t)a8b) << 16) | (((uint32_t)b8b) << 8) | ((uint32_t)c8b);
+    uint32_t pt1 = decrypt_sodark_3(8, ct1, key, tweak1);
+    uint32_t pt2 = decrypt_sodark_3(8, ct2, key, tweak2);
+    printf("%06x %06x %016" PRIx64 " %06x %06x %016" PRIx64 " %02x\n",
+        pt1, ct1, tweak1, pt2, ct2, tweak2, k3);
   }
   return 0;
 }
@@ -114,7 +169,9 @@ int main(int argc, char **argv) {
   assert(decrypt_sodark_6(1, encrypt_sodark_6(1, 0xdeafcafebabe, 0xc2284a1ce7be2f,
       0x543bd88000017550), 0xc2284a1ce7be2f, 0x543bd88000017550) == 0xdeafcafebabe);
 
-  if (argc == 6 && strcmp(argv[1], "-r") == 0) {
+  if (argc == 3 && strcmp(argv[1], "-c") == 0) {
+    return generate_chosen_ciphertexts(argv[0], argv[2]);
+  } else if (argc == 6 && strcmp(argv[1], "-r") == 0) {
     return generate_tuples(argv[0], argv[2], argv[3], argv[4], argv[5], NULL);
   } else if (argc == 6) {
     uint32_t rounds = atoi(argv[2]);

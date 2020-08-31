@@ -10,7 +10,7 @@
    differ in tweak byte five only. The program also performs known-plaintext
    brute force attacks on up to sixteen rounds of the cipher.
 
-   Copyright (C) 2016-2018 Marcus Dansarie <marcus@dansarie.se>
+   Copyright (C) 2016-2018, 2020 Marcus Dansarie <marcus@dansarie.se>
 
    This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -815,6 +815,44 @@ static bool add_pair(pairs_t *pairs, pair_t p) {
   return true;
 }
 
+bool init_tuples(worker_param_t *worker_params) {
+  worker_params->allocstep = 1000;
+  worker_params->allocsize = worker_params->allocstep;
+  worker_params->num_tuples = 0;
+  worker_params->tuples = malloc(sizeof(tuple_t) * worker_params->allocsize);
+  if (worker_params->tuples == NULL) {
+    endwin();
+    fprintf(stderr, "Memory allocation error on line %d.\n", __LINE__);
+    return true;
+  }
+  return false;
+}
+
+void free_tuples(worker_param_t *worker_params) {
+  free(worker_params->tuples);
+  worker_params->tuples = NULL;
+  worker_params->allocsize = 0;
+  worker_params->num_tuples = 0;
+}
+
+bool add_tuple(worker_param_t *worker_params, tuple_t tuple) {
+  worker_params->tuples[worker_params->num_tuples].pt = tuple.pt;
+  worker_params->tuples[worker_params->num_tuples].ct = tuple.ct;
+  worker_params->tuples[worker_params->num_tuples].tw = tuple.tw;
+  worker_params->num_tuples += 1;
+  if (worker_params->num_tuples == worker_params->allocsize) {
+    worker_params->allocsize += worker_params->allocstep;
+    worker_params->tuples = realloc(worker_params->tuples,
+        sizeof(tuple_t) * worker_params->allocsize);
+    if (worker_params->tuples == NULL) {
+      endwin();
+      fprintf(stderr, "Memory allocation error on line %d.\n", __LINE__);
+      return true;
+    }
+  }
+  return false;
+}
+
 void get_elapsed_time(struct timeval start_time, struct timeval time_now,
     int *days, int *hours, int *minutes, int *seconds) {
   int elapsed = time_now.tv_sec - start_time.tv_sec;
@@ -949,7 +987,7 @@ static void draw_foreground(struct timeval start_time, double psuccess, uint32_t
   }
   RETURN_IF_MAXY(maxy, 8);
 
-  mvprintw(8,  22, "%d", rounds);
+  mvprintw(8,  22, "%d    ", rounds);
   RETURN_IF_MAXY(maxy, 9);
   pthread_mutex_lock(&g_next_lock);
   mvprintw(9,  22, "%06" PRIx32 " %06" PRIx32 " %016" PRIx64,
@@ -1034,11 +1072,11 @@ void cleanup_globals() {
 }
 
 bool start_threads(void *(*crack_func)(void*), void *(*cuda_crack_func)(void*),
-    worker_param_t worker_params) {
+    worker_param_t *worker_params) {
 
-  if (g_prof && worker_params.nrounds == 5) {
+  if (g_prof && worker_params->nrounds == 5) {
     g_next = 0xc24a;
-  } else if (g_prof && worker_params.nrounds > 5) {
+  } else if (g_prof && worker_params->nrounds > 5) {
     g_next = 0xc228;
   } else {
     g_next = 0;
@@ -1064,7 +1102,7 @@ bool start_threads(void *(*crack_func)(void*), void *(*cuda_crack_func)(void*),
       CPU_ZERO(&cpus);
       CPU_SET(i, &cpus);
       pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &cpus);
-      if (pthread_create(&(thread_id[i]), &attr, crack_func, &worker_params) != 0) {
+      if (pthread_create(&(thread_id[i]), &attr, crack_func, worker_params) != 0) {
         g_exit = true;
         pthread_mutex_unlock(&g_threadcount_lock);
         endwin();
@@ -1083,7 +1121,7 @@ bool start_threads(void *(*crack_func)(void*), void *(*cuda_crack_func)(void*),
       CPU_ZERO(&cpus);
       CPU_SET((i % num_processors), &cpus);
       pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &cpus);
-      if (pthread_create(&(cuda_thread_id[i]), &attr, cuda_crack_func, &worker_params) != 0) {
+      if (pthread_create(&(cuda_thread_id[i]), &attr, cuda_crack_func, worker_params) != 0) {
         g_exit = true;
         pthread_mutex_unlock(&g_threadcount_lock);
         endwin();
@@ -1141,6 +1179,44 @@ bool run_progress_screen(WINDOW *screen, struct timeval start_time, double psucc
   return userquit;
 }
 
+bool read_input_tuples(worker_param_t *worker_params, FILE *infp) {
+  /* Read tuples from input file. */
+  while (!feof(infp)) {
+    tuple_t tuple;
+    if (fscanf(infp, "%06x %06x %016" PRIx64 "\n", &tuple.pt, &tuple.ct, &tuple.tw) == 3) {
+      if (add_tuple(worker_params, tuple)) {
+        return true;
+      }
+    } else {
+      int c;
+      while ((c = fgetc(infp)) != '\n' && c != EOF) {
+        /* Empty. */
+      }
+    }
+  }
+
+  /* Ensure first two pairs are unique. */
+  while (worker_params->num_tuples > 1
+      && worker_params->tuples[0].pt == worker_params->tuples[1].pt
+      && worker_params->tuples[0].ct == worker_params->tuples[1].ct
+      && worker_params->tuples[0].tw == worker_params->tuples[1].tw) {
+    for (int i = 2; i < worker_params->num_tuples; i++) {
+      worker_params->tuples[i - 1] = worker_params->tuples[i];
+    }
+    worker_params->num_tuples -= 1;
+  }
+  g_current_pair.t1 = worker_params->tuples[0];
+  g_current_pair.t2 = worker_params->tuples[1];
+
+  if (worker_params->num_tuples < 2) {
+    endwin();
+    fprintf(stderr, "At least two valid tuples are required.\n");
+    return 1;
+  }
+
+  return false;
+}
+
 int main(int argc, char **argv) {
   create_sodark_dec_sbox();
 
@@ -1160,13 +1236,13 @@ int main(int argc, char **argv) {
 
   /* Check if correct number of arguments. */
   if (argc != 4 && argc != 5) {
-    fprintf(stderr, "Usage: %s rounds infile outfile\n\n", argv[0]);
+    fprintf(stderr, "Usage: %s rounds/-c infile outfile\n\n", argv[0]);
     return 1;
   } else if (argc == 5) {
     if (strcmp(argv[4], "-prof") == 0) {
       g_prof = true;
     } else {
-      fprintf(stderr, "Usage: %s rounds infile outfile\n\n", argv[0]);
+      fprintf(stderr, "Usage: %s rounds/-c infile outfile\n\n", argv[0]);
       return 1;
     }
   }
@@ -1175,14 +1251,18 @@ int main(int argc, char **argv) {
   memset(&worker_params, 0, sizeof(worker_param_t));
 
   /* Check if the number of rounds is supported. */
-  worker_params.nrounds = atoi(argv[1]);
-  int max_rounds = 8;
-  if (CUDA_ENABLED) {
-    max_rounds = 16;
-  }
-  if (worker_params.nrounds < 2 || worker_params.nrounds > max_rounds) {
-    fprintf(stderr, "Bad number of rounds. Only 2 - %d rounds are supported.\n", max_rounds);
-    return 1;
+  if (strcmp(argv[1], "-c") == 0) {
+    worker_params.nrounds = CHOSEN_CIPHERTEXT;
+  } else {
+    worker_params.nrounds = atoi(argv[1]);
+    int max_rounds = 8;
+    if (CUDA_ENABLED) {
+      max_rounds = 16;
+    }
+    if (worker_params.nrounds < 2 || worker_params.nrounds > max_rounds) {
+      fprintf(stderr, "Bad number of rounds. Only 2 - %d rounds are supported.\n", max_rounds);
+      return 1;
+    }
   }
 
   /* Open input file. */
@@ -1231,74 +1311,47 @@ int main(int argc, char **argv) {
     draw_foreground(start_time, psuccess, worker_params.nrounds, screen, false);
   }
 
-  /* Allocate memory for input tuples. */
-  const int allocstep = 1000;
-  int allocsize = allocstep;
-  worker_params.num_tuples = 0;
-  worker_params.tuples = malloc(sizeof(tuple_t) * allocstep);
-  if (worker_params.tuples == NULL) {
-    endwin();
-    fprintf(stderr, "Memory allocation error on line %d.\n", __LINE__);
+  if (init_tuples(&worker_params)) {
+    return true;
+  }
+
+  if (worker_params.nrounds != CHOSEN_CIPHERTEXT) {
+    if (read_input_tuples(&worker_params, infp)) {
+      free_tuples(&worker_params);
+      fclose(infp);
+      cleanup_globals();
+      return 1;
+    }
+  }
+
+  if (!init_pairs(&g_pairs)) {
+    /* init_pairs has printed an error message. */
+    free_tuples(&worker_params);
     fclose(infp);
     cleanup_globals();
     return 1;
   }
 
-  /* Read tuples from input file. */
-  while (!feof(infp)) {
-    if (fscanf(infp, "%06x %06x %016" PRIx64 "\n",
-        &worker_params.tuples[worker_params.num_tuples].pt,
-        &worker_params.tuples[worker_params.num_tuples].ct,
-        &worker_params.tuples[worker_params.num_tuples].tw) == 3) {
-      worker_params.num_tuples += 1;
-      if (worker_params.num_tuples == allocsize) {
-        allocsize += allocstep;
-        worker_params.tuples = realloc(worker_params.tuples, sizeof(tuple_t) * allocsize);
-        if (worker_params.tuples == NULL) {
-          endwin();
-          fprintf(stderr, "Memory allocation error on line %d.\n", __LINE__);
-          fclose(infp);
-          cleanup_globals();
-          return 1;
+  if (worker_params.nrounds == CHOSEN_CIPHERTEXT) {
+    while (!feof(infp)) {
+      pair_t pair = {0};
+      if (fscanf(infp, "%06x %06x %016" PRIx64 " %06x %06x %016" PRIx64 " %02x\n", &pair.t1.pt,
+          &pair.t1.ct, &pair.t1.tw, &pair.t2.pt, &pair.t2.ct, &pair.t2.tw, pair.k3) == 7) {
+        pair.num_k3 = 1;
+        add_tuple(&worker_params, pair.t1);
+        add_tuple(&worker_params, pair.t2);
+        add_pair(&g_pairs, pair);
+      } else {
+        int c;
+        while ((c = fgetc(infp)) != '\n' && c != EOF) {
+          /* Empty. */
         }
       }
-    } else {
-      int c;
-      while ((c = fgetc(infp)) != '\n' && c != EOF) {
-        /* Empty. */
-      }
     }
   }
+
   fclose(infp);
   infp = NULL;
-
-  /* Ensure first two pairs are unique. */
-  while (worker_params.num_tuples > 1
-      && worker_params.tuples[0].pt == worker_params.tuples[1].pt
-      && worker_params.tuples[0].ct == worker_params.tuples[1].ct
-      && worker_params.tuples[0].tw == worker_params.tuples[1].tw) {
-    for (int i = 2; i < worker_params.num_tuples; i++) {
-      worker_params.tuples[i - 1] = worker_params.tuples[i];
-    }
-    worker_params.num_tuples -= 1;
-  }
-  g_current_pair.t1 = worker_params.tuples[0];
-  g_current_pair.t2 = worker_params.tuples[1];
-
-  if (worker_params.num_tuples < 2) {
-    endwin();
-    free(worker_params.tuples);
-    cleanup_globals();
-    printf("At least two valid tuples are required.\n");
-    return 1;
-  }
-
-    if (!init_pairs(&g_pairs)) {
-      /* init_pairs has printed an error message. */
-      free(worker_params.tuples);
-      cleanup_globals();
-      return 1;
-    }
 
   /* Perform filtering step when cracking 5-8 rounds. */
   if (worker_params.nrounds > 5 && worker_params.nrounds <= 8) {
@@ -1333,7 +1386,7 @@ int main(int argc, char **argv) {
             pair.t2 = worker_params.tuples[k];
             if (!add_pair(&g_pairs, pair)) {
               /* add_pair has printed an error message. */
-              free(worker_params.tuples);
+              free_tuples(&worker_params);
               cleanup_globals();
               return 1;
             }
@@ -1348,7 +1401,7 @@ int main(int argc, char **argv) {
               pair.t2 = worker_params.tuples[k];
               if (!add_pair(&g_pairs, pair)) {
                 /* add_pair has printed an error message. */
-                free(worker_params.tuples);
+                free_tuples(&worker_params);
                 cleanup_globals();
                 return 1;
               }
@@ -1376,7 +1429,7 @@ int main(int argc, char **argv) {
             }
             if (!add_pair(&g_pairs, pair)) {
               /* add_pair has printed an error message. */
-              free(worker_params.tuples);
+              free_tuples(&worker_params);
               cleanup_globals();
               return 1;
             }
@@ -1386,9 +1439,13 @@ int main(int argc, char **argv) {
         }
       }
     }
-  } /* worker_params.nrounds > 5 */
+  } /* worker_params.nrounds > 5 && worker_params.nrounds <= 8 */
 
   psuccess = 100.0;
+
+  if (worker_params.nrounds == CHOSEN_CIPHERTEXT) {
+    worker_params.nrounds = 8;
+  }
 
   /* Select cracking function. */
   void *(*crack_func)(void*) = NULL;
@@ -1396,12 +1453,12 @@ int main(int argc, char **argv) {
   switch (worker_params.nrounds) {
     case 2:
       crack2(worker_params.tuples, worker_params.num_tuples);
-      free(worker_params.tuples);
+      free_tuples(&worker_params);
       cleanup_globals();
       return 0;
     case 3:
       crack3(worker_params.tuples, worker_params.num_tuples);
-      free(worker_params.tuples);
+      free_tuples(&worker_params);
       cleanup_globals();
       return 0;
     case 4:
@@ -1428,7 +1485,7 @@ int main(int argc, char **argv) {
           #endif /* WITH_CUDA */
         } else {
           endwin();
-          free(worker_params.tuples);
+          free_tuples(&worker_params);
           cleanup_globals();
           printf("No candidate pairs found.\n");
           return 0;
@@ -1458,7 +1515,7 @@ int main(int argc, char **argv) {
           #endif /* WITH_CUDA */
         } else {
           endwin();
-          free(worker_params.tuples);
+          free_tuples(&worker_params);
           cleanup_globals();
           printf("No candidate pairs found.\n");
           return 0;
@@ -1511,14 +1568,14 @@ int main(int argc, char **argv) {
     if (g_num_cuda_devices < 0) {
       endwin();
       fprintf(stderr, "Error when getting number of CUDA devices.\n");
-      free(worker_params.tuples);
+      free_tuples(&worker_params);
       cleanup_globals();
       return 1;
     }
     if (g_num_cuda_devices == 0 && worker_params.nrounds > 8) {
       endwin();
       fprintf(stderr, "No CUDA devices found. CPU brute force cracking not supported.\n");
-      free(worker_params.tuples);
+      free_tuples(&worker_params);
       cleanup_globals();
       return 1;
     }
@@ -1545,13 +1602,13 @@ int main(int argc, char **argv) {
   if (g_thread_speeds == NULL || g_last_get_next_calls == NULL) {
     endwin();
     fprintf(stderr, "Malloc failed on line %d.\n", __LINE__);
-    free(worker_params.tuples);
+    free_tuples(&worker_params);
     cleanup_globals();
     return 1;
   }
 
-  if (start_threads(crack_func, cuda_crack_func, worker_params) != true) {
-    free(worker_params.tuples);
+  if (start_threads(crack_func, cuda_crack_func, &worker_params) != true) {
+    free_tuples(&worker_params);
     cleanup_globals();
     return 1;
   }
@@ -1575,8 +1632,8 @@ int main(int argc, char **argv) {
     set_status("Performing brute force key search.");
     g_pairs.num_pairs = 1;
 
-    if (start_threads(NULL, cuda_crack_brute, worker_params) != true) {
-      free(worker_params.tuples);
+    if (start_threads(NULL, cuda_crack_brute, &worker_params) != true) {
+      free_tuples(&worker_params);
       cleanup_globals();
       return 1;
     }
@@ -1600,7 +1657,7 @@ int main(int argc, char **argv) {
   } else {
     printf("%" PRIu64 " keys found in %s.\n", keysfound, timestr);
   }
-  free(worker_params.tuples);
+  free_tuples(&worker_params);
   cleanup_globals();
 
   return 0;
