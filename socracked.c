@@ -71,8 +71,8 @@ uint32_t g_next_pair = 0;                 /* Next pair. (Used when cracking 6, 7
 pairs_t  g_pairs = {NULL, 0, 0, 0};       /* Candidate pairs. Holds pairs for get_next_678. */
 FILE *g_outfp = NULL;                     /* Pointer to output file. */
 
-const uint32_t STATUS_BUF_LEN = 51;
-char g_status[51] = "";
+#define STATUS_BUF_LEN (51)
+char g_status[STATUS_BUF_LEN] = "";
 pair_t g_current_pair = {{0, 0, 0}, {0, 0, 0}, {0}, 0};
 
 /* Updates the current cracking speed in the g_thread_speeds array. Called
@@ -102,7 +102,7 @@ void set_status(const char *status) {
 /* Returns the current user interface status line. */
 static void get_status(char *status) {
   pthread_mutex_lock(&g_write_lock);
-  strncpy(status, g_status, STATUS_BUF_LEN - 1);
+  strncpy(status, g_status, STATUS_BUF_LEN);
   status[STATUS_BUF_LEN - 1] = '\0';
   pthread_mutex_unlock(&g_write_lock);
 }
@@ -878,6 +878,7 @@ static void draw_background(WINDOW *screen) {
   assert(screen != NULL);
   int maxx = 0;
   int maxy = 0;
+  (void)maxx; /* Silence unused warning. */
   getmaxyx(screen, maxy, maxx);
   clear();
   bkgd(COLOR_PAIR(1));
@@ -926,6 +927,7 @@ static void draw_foreground(struct timeval start_time, double psuccess, uint32_t
   attrset(COLOR_PAIR(1));
   int maxx = 0;
   int maxy = 0;
+  (void)maxx; /* Silence unused warning. */
   getmaxyx(screen, maxy, maxx);
   if (qonce) {
     mvprintw(maxy - 2, 1, "Press Q to quit.      ");
@@ -1639,6 +1641,8 @@ int main(int argc, char **argv) {
     }
     run_progress_screen(screen, start_time, 100.0, worker_params.nrounds);
   }
+  #else
+  (void)userquit; /* Silence unused warning. */
   #endif /* WITH_CUDA */
 
   endwin();
