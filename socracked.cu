@@ -280,7 +280,7 @@ __device__ __forceinline__ int s5(eightbits in) {
   return out5;
 }
 
-__device__ __forceinline__ bit_t s6(eightbits in) {
+__device__ __forceinline__ int s6(eightbits in) {
   int var8;  LUT(var8, in.b1, in.b2, in.b6, 0x61);
   int var9;  LUT(var9, in.b7, in.b6, var8, 0xac);
   int var10; LUT(var10, in.b2, in.b7, var8, 0x76);
