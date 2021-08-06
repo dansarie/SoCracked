@@ -21,6 +21,8 @@ project(SoCracked VERSION 1.1.0 LANGUAGES C)
 
 include(CheckLanguage)
 
+option(ENABLE_COVERAGE "Compile and link with gcov." OFF)
+
 find_package(Curses REQUIRED)
 find_package(Threads REQUIRED)
 
@@ -44,5 +46,8 @@ target_link_libraries(socracked ${CMAKE_THREAD_LIBS_INIT} ${CURSES_LIBRARIES} m)
 target_link_libraries(lattice2dimacs  "-lmsgpackc")
 
 set(CMAKE_C_FLAGS "-march=native -Ofast -g -Wall -Wpedantic -DSOCRACKED_VERSION='\"${CMAKE_PROJECT_VERSION}\"'")
+if (ENABLE_COVERAGE AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} --coverage")
+endif (ENABLE_COVERAGE AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
 
 install(TARGETS socracked sodark lattice2dimacs dimacs2key DESTINATION bin)
