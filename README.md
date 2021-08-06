@@ -59,6 +59,13 @@ git submodule update
 docker build -t socracked .
 ```
 
+The following command mounts the current working directory on the host to the `/work` directory in
+a docker container. From there, any of the commands described below can be run.
+
+```
+docker run -it --rm -v "$(pwd)":/work socracked /bin/bash
+```
+
 ## Test
 
 Running the script `test-socracked.sh` will test that cracking works as intended in all supported
@@ -82,7 +89,7 @@ f32f5f ceb446 543bd88000017550
 The following will perform a key recovery attack on four rounds using the test
 vectors from the standard and output the matching keys to `keys.txt`:
 ```
-./socracked 4 test/test4.txt keys.txt
+socracked 4 test/test4.txt keys.txt
 ```
 
 ### SoDark command line utility
@@ -90,7 +97,7 @@ vectors from the standard and output the matching keys to `keys.txt`:
 The `sodark` utility can be used to perform encryption and decryption with any
 number of rounds. For example:
 ```
-./sodark -3e 4 54e0cd c2284a1ce7be2f 543bd88000017550
+sodark -3e 4 54e0cd c2284a1ce7be2f 543bd88000017550
 ```
 
 It can also be used to generate random plaintexts for testing. The following
@@ -98,7 +105,7 @@ will generate 100 plaintext-ciphertext-tweak tuples with the common key
 `c2284a1ce7be2f` and tweak `543bd88000017550`.
 
 ```
-./sodark -r 3 7 c2284a1ce7be2f 543bd88000017550 100
+sodark -r 3 7 c2284a1ce7be2f 543bd88000017550 100
 ```
 
 ### Chosen-ciphertext attack
@@ -121,7 +128,7 @@ chosen-ciphertext pairs for a specific key.
 To launch a chosen-ciphertext attack, SoCracked is called with `-c` instead of
 the number of rounds:
 ```
-./socracked -c chosen.txt keys.txt
+socracked -c chosen.txt keys.txt
 ```
 
 ### SAT problem instance generation
@@ -133,7 +140,7 @@ convert the plaintext-ciphertext-tweak tuples in
 pipe the output to a SAT solver and print the found keys to the console:
 
 ```
-./lattice2dimacs 3 3 sbox-cnf/8-366-3219-65213470-9db07eac.cnf test/test3.txt | sat_solver | ./dimacs2key
+lattice2dimacs 3 3 sbox-cnf/8-366-3219-65213470-9db07eac.cnf test/test3.txt | sat_solver | ./dimacs2key
 ```
 
 The command line arguments for `lattice2dimacs` are, in order:
