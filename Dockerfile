@@ -9,7 +9,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
   && apt-get -y full-upgrade \
-  && apt-get -y install cmake libmsgpack-dev libncurses-dev \
+  && apt-get -y install cmake libncurses-dev libxml2-dev \
   && cd /usr/src/socracked \
   && rm -rf build\
   && mkdir build \

@@ -28,14 +28,14 @@ SAT solver used.
 
 * [CMake](https://cmake.org/) (build system)
 * CUDA (optional, enables brute force cracking)
-* [msgpack](https://github.com/msgpack/msgpack-c) (for generating SAT solver
+* [libxml2](https://github.com/GNOME/libxml2) (for generating SAT solver
   instances with `lattice2dimacs`)
 * ncurses
 
 ## Clone and build
 
 ```
-sudo apt-get -y install cmake git libmsgpack-dev libncurses-dev
+sudo apt-get -y install cmake git libxml2-dev libncurses-dev
 git clone https://github.com/dansarie/SoCracked.git
 cd SoCracked
 git submodule init

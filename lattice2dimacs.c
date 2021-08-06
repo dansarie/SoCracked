@@ -109,7 +109,7 @@ static int add_operation(gate_type op, cnf_repr_t *st, int in1, int in2) {
     case XOR:
       clauses = xor_clauses;
       break;
-    case ANDNOT:
+    case A_AND_NOT_B:
       clauses = andnot_clauses;
       break;
     default:
