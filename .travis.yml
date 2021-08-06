@@ -20,7 +20,7 @@ before_script:
 script:
   - cmake -DENABLE_COVERAGE=ON ..
   - make
-  - ../test_socracked.sh
+  - ../test-socracked.sh
 
 after_success:
   - cd ..
