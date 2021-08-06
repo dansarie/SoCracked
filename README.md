@@ -28,11 +28,14 @@ SAT solver used.
 * CUDA (optional, enables brute force cracking)
 * [msgpack](https://github.com/msgpack/msgpack-c) (for generating SAT solver
   instances with `lattice2dimacs`)
+* ncurses
 
-## Build
+## Clone and build
 
 ```
-sudo apt-get install libmsgpack-dev
+sudo apt-get -y install cmake git libmsgpack-dev libncurses-dev
+git clone https://github.com/dansarie/SoCracked.git
+cd SoCracked
 git submodule init
 git submodule update
 mkdir build
@@ -42,13 +45,24 @@ make
 make install
 ```
 
-The arguments `-DENABLE_CUDA=ON` and `-DENABLE_CUDA=OFF` can be used with cmake to turn CUDA support on or off manually.
+## Clone and build with Docker
+
+SoCracked can also be built to run from a Docker image. For GPU cracking with CUDA, the appropriate
+drivers must be installed on the host system.
+
+```
+sudo apt-get -y install docker.io git
+git clone https://github.com/dansarie/SoCracked.git
+cd SoCracked
+git submodule init
+git submodule update
+docker build -t socracked .
+```
 
 ## Test
 
-```
-../test-socracked.sh
-```
+Running the script `test-socracked.sh` will test that cracking works as intended in all supported
+use cases.
 
 ## Run
 

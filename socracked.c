@@ -885,9 +885,9 @@ static void draw_background(WINDOW *screen) {
   border(0, 0, 0, 0, 0, 0, 0, 0);
   attrset(COLOR_PAIR(1));
   if (CUDA_ENABLED) {
-    PRINT_BACKGROUND_STRING(1,  1,  maxy, "SoCracked v. 1.0 (CUDA)");
+    PRINT_BACKGROUND_STRING(1,  1,  maxy, "SoCracked v. " SOCRACKED_VERSION " (CUDA)");
   } else {
-    PRINT_BACKGROUND_STRING(1,  1,  maxy, "SoCracked v. 1.0");
+    PRINT_BACKGROUND_STRING(1,  1,  maxy, "SoCracked v. " SOCRACKED_VERSION);
   }
   PRINT_BACKGROUND_STRING(3,  1,  maxy, "Start time:");
   PRINT_BACKGROUND_STRING(4,  1,  maxy, "Elapsed time:");
@@ -1567,16 +1567,13 @@ int main(int argc, char **argv) {
     #ifdef WITH_CUDA
     g_num_cuda_devices = get_num_cuda_devices();
     #endif /* WITH_CUDA */
-    if (g_num_cuda_devices < 0) {
+    if (g_num_cuda_devices <= 0 && worker_params.nrounds > 8) {
       endwin();
-      fprintf(stderr, "Error when getting number of CUDA devices.\n");
-      free_tuples(&worker_params);
-      cleanup_globals();
-      return 1;
-    }
-    if (g_num_cuda_devices == 0 && worker_params.nrounds > 8) {
-      endwin();
-      fprintf(stderr, "No CUDA devices found. CPU brute force cracking not supported.\n");
+      const char *errstr = "No CUDA devices found.";
+      if (g_num_cuda_devices < 0) {
+        errstr = "Error when getting number of CUDA devices.";
+      }
+      fprintf(stderr, "%s CPU brute force cracking not supported.\n", errstr);
       free_tuples(&worker_params);
       cleanup_globals();
       return 1;
