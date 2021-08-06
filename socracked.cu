@@ -1400,17 +1400,17 @@ __global__ void find_candidates(int *ret, int offset) {
 
 /* Host functions. */
 
-void list_cuda_devices() {
+int list_cuda_devices() {
   int count = -1;
   cudaError_t err;
   err = cudaGetDeviceCount(&count);
   if (err == 30 || count == 0) {
     printf("No CUDA devices found.\n");
-    return;
+    return 1;
   }
   if (err != 0) {
     fprintf(stderr, "Error: cudaGetDeviceCount returned error %d.\n", err);
-    return;
+    return 1;
   }
   for (int i = 0; i < count; i++) {
     cudaDeviceProp prop;
@@ -1421,6 +1421,7 @@ void list_cuda_devices() {
       printf("CUDA Device %d: %s\n", i, prop.name);
     }
   }
+  return 0;
 }
 
 int get_num_cuda_devices() {

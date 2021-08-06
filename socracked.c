@@ -1231,8 +1231,7 @@ int main(int argc, char **argv) {
 
   #ifdef WITH_CUDA
   if (argc == 2 && strcmp(argv[1], "-devices") == 0) {
-    list_cuda_devices();
-    return 0;
+    return list_cuda_devices();
   }
   #endif /* WITH_CUDA */
 

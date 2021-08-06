@@ -33,7 +33,7 @@ if [ $? == 0 ]; then
   TEST_FILES=("test3.txt" "test4.txt" "test5.txt" "test6.txt" "test7.txt" "test8.txt" "brute_test6.txt" "brute_test7.txt" "brute_test8.txt" "brute_test9.txt" "brute_test10.txt" "brute_test11.txt" "brute_test12.txt" "brute_test13.txt" "brute_test14.txt" "brute_test15.txt" "brute_test16.txt" )
   TEST_ROUNDS=(3 4 5 6 7 8 6 7 8 9 10 11 12 13 14 15 16)
 else
-  echo -e "\033[0;34mCompiled without CUDA support.\033[0m"
+  echo -e "\033[0;34mCompiled without CUDA support or no CUDA devices present.\033[0m"
   TEST_FILES=("test3.txt" "test4.txt" "test5.txt" "test6.txt" "test7.txt" "test8.txt" )
   TEST_ROUNDS=(3 4 5 6 7 8)
 fi
