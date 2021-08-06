@@ -1,0 +1,27 @@
+language: c
+dist: focal
+compiler:
+  - gcc
+
+addons:
+  apt:
+    update: true
+    packages:
+      - libmsgpack-dev
+      - libncurses-dev
+
+before_install:
+  - pip install --user cpp-coveralls
+
+before_script:
+  - mkdir build
+  - cd build
+
+script:
+  - cmake -DENABLE_COVERAGE=ON ..
+  - make
+  - ../test_socracked.sh
+
+after_success:
+  - cd ..
+  - coveralls --gcov-options '\-lp' -E '.*CMake.*'
